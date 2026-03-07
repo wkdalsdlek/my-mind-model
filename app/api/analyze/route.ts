@@ -45,8 +45,8 @@ export async function POST(req: Request) {
             "scale": 0.8~1.2 사이 숫자,
             "comments": [
               {
-                "analysis": "1번 답변 요약 분석",
-                "detailedAnalysis": "1번 답변 심층 분석",
+                "analysis": "1번 답변을 통한 사용자 요약 분석",
+                "detailedAnalysis": "1번 답변을 통한 사용자 심층 분석",
                 "effect": "시적인 오로라 시각 변화 묘사"
               }
               // ... 반드시 10번까지 작성

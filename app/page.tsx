@@ -26,6 +26,18 @@ interface MoodData {
   comments: { analysis: string; detailedAnalysis: string; effect: string }[]; 
 }
 
+// 💡 새롭게 추가된 입력값 검사 함수 (숫자/기호 도배 차단)
+const isValidInput = (text: string) => {
+  const trimmed = text.trim();
+  // 1. 전체 글자 수가 10자 미만이면 실패
+  if (trimmed.length < 10) return false;
+  // 2. 완성된 한글(가-힣) 또는 알파벳(a-zA-Z)만 추출 (숫자, ㅋㅋㅋ, 특수기호 무시)
+  const meaningfulChars = trimmed.match(/[가-힣a-zA-Z]/g);
+  // 3. 의미 있는 문자가 최소 5글자 이상 포함되어 있지 않으면 실패
+  if (!meaningfulChars || meaningfulChars.length < 5) return false;
+  return true;
+};
+
 function SceneLights({ colors }: { colors: [string, string, string] }) {
   const light1 = useRef<THREE.PointLight>(null!);
   const light2 = useRef<THREE.PointLight>(null!);
@@ -105,7 +117,11 @@ export default function Home() {
   };
 
   const handleNext = () => {
-    if (answers[step].trim() === "") { alert("질문에 대한 답변을 적어주세요."); return; }
+    // 💡 깐깐한 유효성 검사 적용
+    if (!isValidInput(answers[step])) { 
+      alert("의미 있는 단어를 포함하여 조금 더 자세히 적어주세요. (숫자/기호/초성 제외 한글 최소 5자 이상, 전체 10자 이상)"); 
+      return; 
+    }
     if (step < 9) setStep(step + 1);
   };
 
@@ -118,7 +134,12 @@ export default function Home() {
   };
 
   const handleAnalyze = async () => {
-    if (answers[9].trim() === "") { alert("마지막 답변을 적어주세요."); return; }
+    // 💡 마지막 답변에도 깐깐한 유효성 검사 적용
+    if (!isValidInput(answers[9])) { 
+      alert("마지막 답변입니다. 의미 있는 단어를 포함하여 조금 더 자세히 적어주세요."); 
+      return; 
+    }
+
     setIsAnalyzing(true);
     try {
       const response = await fetch("/api/analyze", {
@@ -216,7 +237,6 @@ export default function Home() {
 
       {!isAnalysisOpen && (
         <div style={{ position: "absolute", top: "10%", width: "100%", display: "flex", justifyContent: "center", zIndex: 5 }}>
-           {/* 💡 whiteSpace: "pre-wrap" 속성과 replace 함수를 추가하여 "날씨:" 앞에서 줄바꿈 되도록 처리했습니다. */}
            <h2 style={{ fontSize: "28px", fontWeight: "bold", textShadow: `0 0 20px ${currentData.colors[1]}`, letterSpacing: "1px", textAlign: "center", padding: "0 20px", whiteSpace: "pre-wrap", lineHeight: "1.4" }}>
              {currentData.title ? currentData.title.replace(" 날씨:", "\n날씨:") : "당신의 내면을 닮은 오로라"}
            </h2>
@@ -242,7 +262,6 @@ export default function Home() {
         
         <div style={{ padding: "20px 30px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {/* 💡 사이드 패널의 작은 제목에도 줄바꿈이 적용되도록 처리했습니다. */}
             <span style={{ fontSize: "12px", color: "#aaa", marginBottom: "8px", whiteSpace: "pre-wrap", lineHeight: "1.4" }}>
               {currentData.title ? currentData.title.replace(" 날씨:", "\n날씨:") : ""}
             </span>

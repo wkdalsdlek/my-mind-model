@@ -82,7 +82,7 @@ function MindModel({ data }: { data: MoodData }) {
 
   return (
     <group ref={groupRef}>
-      <Sphere args={[1.5, 130, 130]}>
+      <Sphere args={[1.5, 75, 75]}>
         <MeshDistortMaterial ref={materialRef} metalness={0.8} roughness={0.2} transparent opacity={0.7} wireframe={data.wireframe} emissive="white">
           <GradientTexture attach="map" stops={[0, 0.5, 1]} colors={data.colors} size={1024} />
           <GradientTexture attach="emissiveMap" stops={[0, 0.5, 1]} colors={data.colors} size={1024} />
@@ -103,7 +103,7 @@ export default function Home() {
 
   const [passwordInput, setPasswordInput] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const SECRET_PASSWORD = "20250208"; 
+  const SECRET_PASSWORD = "202220707"; 
 
   const [currentData, setCurrentData] = useState<MoodData>({
     title: "시간이 멈춘 어느 날\n날씨: 맑음",

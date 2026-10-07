@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useRef, useMemo, type ComponentRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Sphere, MeshDistortMaterial, OrbitControls, GradientTexture } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -64,7 +64,7 @@ function SceneLights({ colors }: { colors: [string, string, string] }) {
 }
 
 function MindModel({ data }: { data: MoodData }) {
-  const materialRef = useRef<any>(null!);
+  const materialRef = useRef<ComponentRef<typeof MeshDistortMaterial> & { speed: number }>(null!);
   const groupRef = useRef<THREE.Group>(null!); 
 
   useFrame(() => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo, useReducer, type ComponentRef } from "react";
+import { useEffect, useState, useRef, useMemo, useReducer, type ComponentRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Sphere, MeshDistortMaterial, OrbitControls, GradientTexture } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -9,7 +9,9 @@ import * as THREE from "three";
 import CapsuleQuestionnaire from "@/components/questionnaire/CapsuleQuestionnaire";
 import QuestionAtmosphere from "@/components/questionnaire/QuestionAtmosphere";
 import { createKeywordPools, createSelectedCapsule, QUESTION_DATA, QUESTIONS, type KeywordCapsule } from "@/lib/capsules";
-import { createQuestionnaireState, firstIncompleteQuestion, questionnaireReducer, serializeLegacyAnswers } from "@/lib/questionnaire-state";
+import { createQuestionnaireState, firstIncompleteQuestion, getApprovedClosingMessage, questionnaireReducer, serializeLegacyAnswers } from "@/lib/questionnaire-state";
+import { buildClosingMessageInput, closingInputFingerprint } from "@/lib/closing-message";
+import { ClosingMessageRequestController } from "@/lib/closing-message-client";
 
 interface MoodData {
   title?: string;
@@ -77,8 +79,31 @@ export default function Home() {
   const [questionnaire, dispatchQuestionnaire] = useReducer(questionnaireReducer, undefined, createQuestionnaireState);
   const { selections, responses } = questionnaire;
   const [keywordPools, setKeywordPools] = useState(createKeywordPools);
-  const [closingDraft, setClosingDraft] = useState("");
-  const [closingKeywordDraft, setClosingKeywordDraft] = useState("");
+  const closingDraft = questionnaire.closing.authoredText;
+  const closingKeywordDraft = questionnaire.closing.authoredWord;
+  const [closingRequests] = useState(() => new ClosingMessageRequestController());
+  const closingInput = useMemo(() => buildClosingMessageInput({ selections, responses }, closingDraft, closingKeywordDraft), [selections, responses, closingDraft, closingKeywordDraft]);
+  const closingFingerprint = closingInputFingerprint(closingInput);
+  const approvedClosingMessage = getApprovedClosingMessage(questionnaire);
+  useEffect(() => {
+    if (step !== 9 || (closingRequests.fingerprint && closingRequests.fingerprint !== closingFingerprint)) {
+      closingRequests.cancel();
+      dispatchQuestionnaire({ type: "closing-cancel" });
+    }
+  }, [step, closingFingerprint, closingRequests]);
+  useEffect(() => () => closingRequests.cancel(), [closingRequests]);
+  const cancelClosingRequest = () => { closingRequests.cancel(); dispatchQuestionnaire({ type: "closing-cancel" }); };
+  const setClosingDraft = (text: string) => { cancelClosingRequest(); dispatchQuestionnaire({ type: "closing-input", field: "authoredText", text }); };
+  const setClosingKeywordDraft = (text: string) => { cancelClosingRequest(); dispatchQuestionnaire({ type: "closing-input", field: "authoredWord", text }); };
+  const generateClosingMessage = () => {
+    if (step !== 9 || isAnalyzing || questionnaire.closing.request) return;
+    const previousText = questionnaire.closing.aiDraft?.inputFingerprint === closingFingerprint ? questionnaire.closing.aiDraft.text : undefined;
+    void closingRequests.generate(closingInput, previousText, {
+      start: (id, inputFingerprint) => dispatchQuestionnaire({ type: "closing-start", id, inputFingerprint }),
+      success: (id, inputFingerprint, text) => dispatchQuestionnaire({ type: "closing-success", id, inputFingerprint, text }),
+      failure: (id, inputFingerprint, code) => dispatchQuestionnaire({ type: "closing-failure", id, inputFingerprint, code }),
+    });
+  };
   const closingKeywords = useMemo(() => [...questionnaire.personalization.recommendations, ...keywordPools[9]], [questionnaire.personalization.recommendations, keywordPools]);
   const answers = serializeLegacyAnswers(questionnaire);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -107,7 +132,7 @@ export default function Home() {
     if (step < QUESTIONS.length - 1) setStep(step + 1);
   };
 
-  const handlePrev = () => { if (!isAnalyzing && step > 0) setStep(step - 1); };
+  const handlePrev = () => { if (!isAnalyzing && step > 0) { cancelClosingRequest(); setStep(step - 1); } };
 
   const handleSkip = () => {
     if (isAnalyzing || !QUESTION_DATA[step].allowSkip || selections[step].length) return;
@@ -117,12 +142,14 @@ export default function Home() {
 
   const handleSelect = (keyword: KeywordCapsule) => {
     if (isAnalyzing) return;
+    cancelClosingRequest();
     const selection = createSelectedCapsule(keyword, QUESTION_DATA[step].id, crypto.randomUUID());
     dispatchQuestionnaire({ type: "select", step, selection });
   };
 
   const handleRemove = (selectionId: string) => {
     if (isAnalyzing) return;
+    cancelClosingRequest();
     dispatchQuestionnaire({ type: "remove", step, selectionId });
   };
 
@@ -133,6 +160,7 @@ export default function Home() {
 
   const handleAnalyze = async () => {
     if (isAnalyzing) return;
+    if (!getApprovedClosingMessage(questionnaire)) { setStep(9); return; }
     const unanswered = firstIncompleteQuestion(questionnaire);
     if (unanswered !== -1) {
       setStep(unanswered);
@@ -167,8 +195,7 @@ export default function Home() {
   const handleReset = () => {
     if(window.confirm("다시 처음부터 성찰하시겠습니까? 작성된 내용은 지워집니다.")) {
       setStep(0); dispatchQuestionnaire({ type: "reset" }); setKeywordPools(createKeywordPools()); setShowResult(false);
-      setClosingDraft("");
-      setClosingKeywordDraft("");
+      closingRequests.cancel();
       setCurrentData({ ...currentData, comments: [] });
       setIsAnalysisOpen(false); setIsDetailedMode(false);
     }
@@ -213,6 +240,12 @@ export default function Home() {
           onClosingDraftChange={setClosingDraft}
           closingKeywordDraft={closingKeywordDraft}
           onClosingKeywordDraftChange={setClosingKeywordDraft}
+          closingState={questionnaire.closing}
+          closingInput={closingInput}
+          closingApproved={!!approvedClosingMessage}
+          onGenerateClosing={generateClosingMessage}
+          onEditClosing={text => { cancelClosingRequest(); dispatchQuestionnaire({ type: "closing-edit", text }); }}
+          onApproveClosing={direct => dispatchQuestionnaire({ type: "closing-approve", direct, approvedAt: new Date().toISOString() })}
           busy={isAnalyzing}
           onSelect={handleSelect}
           onRemove={handleRemove}

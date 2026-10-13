@@ -48,7 +48,7 @@ export interface Q10RecommendationResult {
 export interface Q10RecommendationState extends Q10RecommendationResult {
   invalidationCount: number;
   notice: string;
-  // Reserved for phase 3. Phase 2 never generates or approves a sentence.
+  // Legacy phase 2 placeholders. Active drafts/approval live in QuestionnaireState.closing.
   condensedSentence: string | null;
   approvedSentence: string | null;
 }

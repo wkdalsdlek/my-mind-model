@@ -5,6 +5,9 @@ import { createCustomKeyword, QUESTION_DATA, SEMANTIC_PROFILES, type KeywordCaps
 import type { QuestionResponseStatus } from "@/lib/questionnaire-state";
 import type { Q10RecommendationState } from "@/lib/personalization-contract";
 import Q10RecommendationDetails from "./Q10RecommendationDetails";
+import Q10ClosingMessage from "./Q10ClosingMessage";
+import type { ClosingMessageInput } from "@/lib/closing-message";
+import type { ClosingMessageState } from "@/lib/closing-message-state";
 import styles from "./CapsuleQuestionnaire.module.css";
 import { useCapsulePhysics } from "./useCapsulePhysics";
 import { useCapsuleDrag } from "./useCapsuleDrag";
@@ -20,6 +23,12 @@ interface Props {
   onClosingDraftChange: (text: string) => void;
   closingKeywordDraft: string;
   onClosingKeywordDraftChange: (text: string) => void;
+  closingState: ClosingMessageState;
+  closingInput: ClosingMessageInput;
+  onGenerateClosing: () => void;
+  onEditClosing: (text: string) => void;
+  onApproveClosing: (direct?: boolean) => void;
+  closingApproved: boolean;
   busy: boolean;
   onSelect: (keyword: KeywordCapsule) => void;
   onRemove: (selectionId: string) => void;
@@ -33,7 +42,7 @@ function capsuleStyle(keyword: KeywordCapsule): CSSProperties {
   return { "--capsule-rgb": SEMANTIC_PROFILES[keyword.group].color } as CSSProperties;
 }
 
-export default function CapsuleQuestionnaire({ step, keywords, selected, responseStatus, personalization, closingDraft, onClosingDraftChange, closingKeywordDraft, onClosingKeywordDraftChange, busy, onSelect, onRemove, onCreate, onPrevious, onSkip, onNext }: Props) {
+export default function CapsuleQuestionnaire({ step, keywords, selected, responseStatus, personalization, closingDraft, onClosingDraftChange, closingKeywordDraft, onClosingKeywordDraftChange, closingState, closingInput, onGenerateClosing, onEditClosing, onApproveClosing, closingApproved, busy, onSelect, onRemove, onCreate, onPrevious, onSkip, onNext }: Props) {
   const question = QUESTION_DATA[step];
   const closingQuestion = question.keywordMode === "personalized";
   const [wordInput, setWordInput] = useState("");
@@ -161,12 +170,14 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, respons
               maxLength={1000} rows={3} disabled={busy} placeholder="마음에 남기고 싶은 문장을 직접 적어보세요" />
             <button type="submit" disabled={busy || !closingDraft.trim()}>내 문장을 답변에 담기</button>
           </form>}
+          {closingQuestion && <Q10ClosingMessage state={closingState} input={closingInput} busy={busy} onGenerate={onGenerateClosing} onEdit={onEditClosing} onApprove={onApproveClosing} />}
         </div>
         <nav className={styles.navigation} aria-label="질문 이동">
           <button className={styles.previous} onClick={onPrevious} disabled={step === 0 || busy}>← 이전</button>
           {question.allowSkip && <button className={styles.skip} onClick={onSkip} disabled={busy || selected.length > 0}>건너뛰기</button>}
-          <button className={styles.next} onClick={onNext} disabled={selected.length === 0 || busy}>{busy ? "오로라를 읽는 중…" : step === QUESTION_DATA.length - 1 ? "오로라 만나기 ✦" : "다음 질문 →"}</button>
+          <button className={styles.next} onClick={onNext} disabled={busy || (closingQuestion ? !closingApproved || !!closingState.request : selected.length === 0)}>{busy ? "오로라를 읽는 중…" : step === QUESTION_DATA.length - 1 ? "오로라 만나기 ✦" : "다음 질문 →"}</button>
         </nav>
+        {closingQuestion && !closingApproved && <p className={styles.answerHint}>마음에 남길 문장을 결정하면 다음 단계로 이어갈 수 있어요.</p>}
         <p className={styles.footerNote}>정답은 없어요. 지금의 마음이면 충분해요.</p>
       </section>
 

@@ -87,9 +87,10 @@
 .emptyState > span:last-child { margin-top: 8px; color: #77829e; font-size: 10px; }
 .selectedList { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 12px 10px; }
 .answerHint { margin-top: 10px; font-size: 10px; color: #76809b; }
-.navigation { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
+.navigation { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; }
 .navigation button { border-radius: 12px; padding: 14px 18px; font-size: 12px; cursor: pointer; transition: background 180ms, opacity 180ms; }
 .previous { color: #a6aec4; border: 1px solid rgb(167 175 209 / 16%); background: transparent; }
+.skip { color: #939db6; border: 1px solid transparent; background: transparent; }
 .next { color: #eae9f8; border: 1px solid rgb(186 169 223 / 26%); background: linear-gradient(130deg, #444063, #313d56); }
 .navigation button:disabled { opacity: .4; cursor: not-allowed; }
 .navigation button:not(:disabled):hover { background-color: rgb(168 146 215 / 12%); }
@@ -132,7 +133,9 @@
 .ambientLight::before { background: radial-gradient(ellipse 80% 16% at 50% 42%, rgb(179 151 223 / 12%), transparent 75%), radial-gradient(ellipse 65% 12% at 45% 51%, rgb(99 177 180 / 9%), transparent 80%); }
 .ambientLight::after { background: radial-gradient(ellipse 75% 15% at 50% 64%, rgb(219 151 185 / 8%), transparent 80%); animation-direction: alternate-reverse; animation-duration: 57s; }
 .capsuleField { position: relative; z-index: 1; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 24px clamp(16px, 3vw, 50px); scrollbar-width: thin; scrollbar-color: #303b56 transparent; }
-.capsuleGrid { position: relative; min-height: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(116px, 1fr); gap: 12px 8px; align-content: stretch; }
+.capsuleGrid { position: relative; min-height: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(116px, auto); gap: 12px 8px; align-content: stretch; }
+.fieldEmpty { grid-column: 1 / -1; align-self: center; text-align: center; padding: 32px 16px; color: #bdc4db; font-size: 14px; line-height: 1.8; }
+.fieldEmpty > span { color: #929fbc; font-size: 12px; }
 .capsuleSlot { display: grid; place-items: center; min-width: 0; padding: 14px; contain: layout style; pointer-events: none; }
 .floatingCapsule {
   display: flex;
@@ -285,7 +288,7 @@
   .fieldHeader { padding: 26px 24px 8px; }
   .fieldHint { font-size: 9px; }
   .capsuleField { flex: none; height: 450px; padding: 16px 20px; }
-  .capsuleGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 104px; min-height: auto; gap: 6px; }
+  .capsuleGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(104px, auto); min-height: auto; gap: 6px; }
   .capsuleSlot { padding: 12px; }
   .floatingCapsule { max-width: 150px; }
   .sourceCapsule { backdrop-filter: none; padding: 12px 14px; font-size: 13.3px; }

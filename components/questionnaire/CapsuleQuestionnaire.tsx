@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { classifyKeyword, QUESTION_DATA, SEMANTIC_PROFILES, type KeywordCapsule, type SelectedCapsule } from "@/lib/capsules";
+import { createCustomKeyword, QUESTION_DATA, SEMANTIC_PROFILES, type KeywordCapsule, type SelectedCapsule } from "@/lib/capsules";
+import type { QuestionResponseStatus } from "@/lib/questionnaire-state";
 import styles from "./CapsuleQuestionnaire.module.css";
 import { useCapsulePhysics } from "./useCapsulePhysics";
 import { useCapsuleDrag } from "./useCapsuleDrag";
@@ -11,11 +12,13 @@ interface Props {
   step: number;
   keywords: KeywordCapsule[];
   selected: SelectedCapsule[];
+  responseStatus: QuestionResponseStatus;
   busy: boolean;
   onSelect: (keyword: KeywordCapsule) => void;
   onRemove: (selectionId: string) => void;
   onCreate: (keyword: KeywordCapsule) => void;
   onPrevious: () => void;
+  onSkip: () => void;
   onNext: () => void;
 }
 
@@ -23,8 +26,9 @@ function capsuleStyle(keyword: KeywordCapsule): CSSProperties {
   return { "--capsule-rgb": SEMANTIC_PROFILES[keyword.group].color } as CSSProperties;
 }
 
-export default function CapsuleQuestionnaire({ step, keywords, selected, busy, onSelect, onRemove, onCreate, onPrevious, onNext }: Props) {
+export default function CapsuleQuestionnaire({ step, keywords, selected, responseStatus, busy, onSelect, onRemove, onCreate, onPrevious, onSkip, onNext }: Props) {
   const question = QUESTION_DATA[step];
+  const closingQuestion = question.keywordMode === "personalized";
   const [input, setInput] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const [motionPaused, setMotionPaused] = useState(() => {
@@ -96,7 +100,7 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, busy, o
   const addKeyword = () => {
     const label = input.trim();
     if (!label || busy || composing.current) return;
-    onCreate({ id: crypto.randomUUID(), label, group: classifyKeyword(label) });
+    onCreate(createCustomKeyword(question.id, input, crypto.randomUUID()));
     setInput("");
     setAnnouncement(`${label} 캡슐이 키워드 공간에 생성되었습니다.`);
     requestAnimationFrame(() => field.current?.scrollTo({ top: field.current.scrollHeight, behavior: reducedMotion() ? "instant" : "smooth" }));
@@ -113,14 +117,14 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, busy, o
           </div>
           <p className={styles.category}>{question.category}</p>
           <h1 id="question-title" className={styles.question}>{question.prompt}</h1>
-          <p className={styles.hint}>마음에 닿는 단어를 이곳으로 옮겨보세요.<br />같은 단어를 여러 번 담아도 좋아요.</p>
+          <p className={styles.hint}>{question.helperText ?? <>마음에 닿는 단어를 이곳으로 옮겨보세요.<br />같은 단어를 여러 번 담아도 좋아요.</>}</p>
           <div className={styles.answerHeading}><h2>내 마음에 담은 단어</h2><span>{selected.length}개의 조각</span></div>
           <div ref={dropZone} className={`${styles.dropZone} ${overDropZone ? styles.dropZoneActive : ""}`} style={{ "--answer-rgb": SEMANTIC_PROFILES[(keywords.find(keyword => keyword.id === activeId) ?? selected[selected.length - 1])?.group ?? "depth"].color } as CSSProperties} aria-label="선택한 답변 캡슐 영역">
             <span ref={answerGlow} className={styles.answerGlow} aria-hidden="true" />
             {selected.length === 0 ? (
               <div className={styles.emptyState}>
                 <span className={styles.emptyOrb} aria-hidden="true">＋</span>
-                <p>{overDropZone ? "여기에 내려놓으세요" : "당신의 마음을 담아주세요"}</p>
+                <p>{overDropZone ? "여기에 내려놓으세요" : responseStatus === "skipped" ? "잠시 건너뛴 질문이에요" : "당신의 마음을 담아주세요"}</p>
                 <span>캡슐을 끌어오거나, 가볍게 눌러보세요</span>
               </div>
             ) : (
@@ -138,6 +142,7 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, busy, o
         </div>
         <nav className={styles.navigation} aria-label="질문 이동">
           <button className={styles.previous} onClick={onPrevious} disabled={step === 0 || busy}>← 이전</button>
+          {question.allowSkip && <button className={styles.skip} onClick={onSkip} disabled={busy || selected.length > 0}>건너뛰기</button>}
           <button className={styles.next} onClick={onNext} disabled={selected.length === 0 || busy}>{busy ? "오로라를 읽는 중…" : step === QUESTION_DATA.length - 1 ? "오로라 만나기 ✦" : "다음 질문 →"}</button>
         </nav>
         <p className={styles.footerNote}>정답은 없어요. 지금의 마음이면 충분해요.</p>
@@ -150,6 +155,7 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, busy, o
           <div ref={stage} className={styles.capsuleGrid}>
             <div ref={sparkLayer} className={styles.sparkLayer} aria-hidden="true" />
             <div ref={trailLayer} className={styles.trailLayer} aria-hidden="true" />
+            {closingQuestion && !keywords.length && <div className={styles.fieldEmpty}><p>마음에 남기고 싶은 말이 있나요?</p><span>아래에서 단어나 문장을 직접 띄워보세요.</span></div>}
             {keywords.map((keyword) => (
               <div className={styles.capsuleSlot} key={keyword.id}>
                 <div className={styles.floatingCapsule} data-floating-id={keyword.id} style={capsuleStyle(keyword)}>
@@ -163,10 +169,10 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, busy, o
           </div>
         </div>
         <form className={styles.keywordComposer} onSubmit={(event) => { event.preventDefault(); addKeyword(); }}>
-          <label htmlFor="new-keyword">여기에 없는 마음도 괜찮아요</label>
+          <label htmlFor="new-keyword">{closingQuestion ? "마음에 남기고 싶은 말을 띄워보세요" : "여기에 없는 마음도 괜찮아요"}</label>
           <div className={styles.inputShell}>
             <span className={styles.inputSpark} aria-hidden="true">✧</span>
-            <input id="new-keyword" value={input} onChange={(event) => setInput(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || composing.current || event.keyCode === 229)) event.preventDefault(); }} placeholder="나만의 단어를 띄워보세요" maxLength={16} disabled={busy} autoComplete="off" />
+            <input id="new-keyword" value={input} onChange={(event) => setInput(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || composing.current || event.keyCode === 229)) event.preventDefault(); }} placeholder={closingQuestion ? "나만의 단어나 문장을 남겨보세요" : "나만의 단어를 띄워보세요"} maxLength={closingQuestion ? 200 : 16} disabled={busy} autoComplete="off" />
             <button type="submit" disabled={!input.trim() || busy} aria-label="새 키워드 캡슐 생성">↵</button>
           </div>
           <p>단어를 적고 Enter · 같은 단어도 새로 띄울 수 있어요</p>

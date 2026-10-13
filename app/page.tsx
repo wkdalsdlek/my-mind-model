@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo, type ComponentRef } from "react";
+import { useState, useRef, useMemo, useReducer, type ComponentRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Sphere, MeshDistortMaterial, OrbitControls, GradientTexture } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -8,7 +8,8 @@ import * as THREE from "three";
 
 import CapsuleQuestionnaire from "@/components/questionnaire/CapsuleQuestionnaire";
 import QuestionAtmosphere from "@/components/questionnaire/QuestionAtmosphere";
-import { createKeywordPools, QUESTIONS, serializeSelections, type KeywordCapsule, type SelectedCapsule } from "@/lib/capsules";
+import { createKeywordPools, createSelectedCapsule, QUESTION_DATA, QUESTIONS, type KeywordCapsule } from "@/lib/capsules";
+import { createQuestionnaireState, firstIncompleteQuestion, questionnaireReducer, serializeLegacyAnswers } from "@/lib/questionnaire-state";
 
 interface MoodData {
   title?: string;
@@ -73,9 +74,10 @@ function MindModel({ data }: { data: MoodData }) {
 
 export default function Home() {
   const [step, setStep] = useState(0); 
-  const [selections, setSelections] = useState<SelectedCapsule[][]>(() => QUESTIONS.map(() => []));
+  const [questionnaire, dispatchQuestionnaire] = useReducer(questionnaireReducer, undefined, createQuestionnaireState);
+  const { selections, responses } = questionnaire;
   const [keywordPools, setKeywordPools] = useState(createKeywordPools);
-  const answers = serializeSelections(selections);
+  const answers = serializeLegacyAnswers(questionnaire);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResult, setShowResult] = useState(false); 
 
@@ -104,15 +106,21 @@ export default function Home() {
 
   const handlePrev = () => { if (!isAnalyzing && step > 0) setStep(step - 1); };
 
+  const handleSkip = () => {
+    if (isAnalyzing || !QUESTION_DATA[step].allowSkip || selections[step].length) return;
+    dispatchQuestionnaire({ type: "skip", step });
+    setStep(step + 1);
+  };
+
   const handleSelect = (keyword: KeywordCapsule) => {
     if (isAnalyzing) return;
-    const selection = { ...keyword, selectionId: crypto.randomUUID() };
-    setSelections((previous) => previous.map((items, index) => index === step ? [...items, selection] : items));
+    const selection = createSelectedCapsule(keyword, QUESTION_DATA[step].id, crypto.randomUUID());
+    dispatchQuestionnaire({ type: "select", step, selection });
   };
 
   const handleRemove = (selectionId: string) => {
     if (isAnalyzing) return;
-    setSelections((previous) => previous.map((items, index) => index === step ? items.filter((item) => item.selectionId !== selectionId) : items));
+    dispatchQuestionnaire({ type: "remove", step, selectionId });
   };
 
   const handleCreateKeyword = (keyword: KeywordCapsule) => {
@@ -122,7 +130,7 @@ export default function Home() {
 
   const handleAnalyze = async () => {
     if (isAnalyzing) return;
-    const unanswered = selections.findIndex((items) => items.length === 0);
+    const unanswered = firstIncompleteQuestion(questionnaire);
     if (unanswered !== -1) {
       setStep(unanswered);
       return;
@@ -155,7 +163,7 @@ export default function Home() {
 
   const handleReset = () => {
     if(window.confirm("다시 처음부터 성찰하시겠습니까? 작성된 내용은 지워집니다.")) {
-      setStep(0); setSelections(QUESTIONS.map(() => [])); setKeywordPools(createKeywordPools()); setShowResult(false);
+      setStep(0); dispatchQuestionnaire({ type: "reset" }); setKeywordPools(createKeywordPools()); setShowResult(false);
       setCurrentData({ ...currentData, comments: [] });
       setIsAnalysisOpen(false); setIsDetailedMode(false);
     }
@@ -194,11 +202,13 @@ export default function Home() {
           step={step}
           keywords={keywordPools[step]}
           selected={selections[step]}
+          responseStatus={responses[step].status}
           busy={isAnalyzing}
           onSelect={handleSelect}
           onRemove={handleRemove}
           onCreate={handleCreateKeyword}
           onPrevious={handlePrev}
+          onSkip={handleSkip}
           onNext={step === QUESTIONS.length - 1 ? handleAnalyze : handleNext}
         />
       </QuestionAtmosphere>

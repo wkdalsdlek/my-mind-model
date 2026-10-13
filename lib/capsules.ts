@@ -1,6 +1,7 @@
 import type { KeywordSemanticWeight } from "./semantic-families";
 import { QUESTION_DATA, type AnswerIntent, type QuestionId } from "./question-data";
 import { KEYWORD_SEMANTICS } from "./keyword-semantics";
+import type { RecommendationProvenance } from "./personalization-contract";
 
 export { QUESTION_DATA } from "./question-data";
 
@@ -19,6 +20,7 @@ export interface KeywordCapsule {
   source?: KeywordSource;
   semanticWeights?: readonly KeywordSemanticWeight[];
   answerIntent?: AnswerIntent;
+  recommendation?: RecommendationProvenance;
 }
 
 export interface SelectedCapsule extends KeywordCapsule {
@@ -77,6 +79,12 @@ export function createSelectedCapsule(keyword: KeywordCapsule, questionId: Quest
     originalText: keyword.originalText ?? keyword.label,
     semanticWeights: (keyword.semanticWeights ?? []).map(weight => ({ ...weight })),
     answerIntent: QUESTION_DATA.find(question => question.id === questionId)!.answerIntent,
+    ...(keyword.recommendation ? { recommendation: {
+      ...keyword.recommendation,
+      evidence: keyword.recommendation.evidence.map(evidence => ({ ...evidence })),
+      evidenceQuestionIds: [...keyword.recommendation.evidenceQuestionIds],
+      evidenceSelectionIds: [...keyword.recommendation.evidenceSelectionIds],
+    } } : {}),
     selectionId,
   };
 }

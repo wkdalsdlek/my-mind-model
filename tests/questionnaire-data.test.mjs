@@ -1,29 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { runInThisContext } from "node:vm";
 import test from "node:test";
-import ts from "typescript";
-
-// Execute the real TypeScript modules with the already installed compiler; no new runner.
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cache = new Map();
-function loadModule(file) {
-  const filename = resolve(root, file);
-  if (cache.has(filename)) return cache.get(filename).exports;
-  const compiledModule = { exports: {} };
-  cache.set(filename, compiledModule);
-  const { outputText } = ts.transpileModule(readFileSync(filename, "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  });
-  const requireLocal = (specifier) => {
-    assert.ok(specifier.startsWith("."), `Unexpected dependency: ${specifier}`);
-    return loadModule(resolve(dirname(filename), `${specifier}.ts`));
-  };
-  runInThisContext(`(function(require, module, exports) { ${outputText}\n})`, { filename })(requireLocal, compiledModule, compiledModule.exports);
-  return compiledModule.exports;
-}
+import { loadModule } from "./helpers/load-typescript.mjs";
 
 const { QUESTION_DATA, createKeywordPools, createCustomKeyword, createSelectedCapsule, serializeSelections, SEMANTIC_PROFILES } = loadModule("lib/capsules.ts");
 const { SEMANTIC_FAMILIES, validateSemanticFamilies } = loadModule("lib/semantic-families.ts");

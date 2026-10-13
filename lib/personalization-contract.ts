@@ -1,11 +1,31 @@
 import type { KeywordCapsule } from "./capsules";
+import type { AnswerIntent, QuestionId } from "./question-data";
 
-/** Contract only. No recommendations, AI summary or approval flow run in phase 1. */
+export interface RecommendationEvidence {
+  questionId: QuestionId;
+  keywordId: string;
+  selectionId: string;
+  label: string;
+  originalText: string;
+  answerIntent: AnswerIntent;
+}
+
+export interface RecommendationProvenance {
+  kind: "direct" | "expanded" | "common";
+  generator: "local" | "fallback";
+  semanticStatus: "mapped" | "unclassified";
+  evidence: readonly RecommendationEvidence[];
+  evidenceQuestionIds: readonly QuestionId[];
+  evidenceSelectionIds: readonly string[];
+  reason: string;
+  topicKey: string;
+  basisFingerprint: string;
+}
+
 export interface PersonalizedKeyword extends KeywordCapsule {
   questionId: "q10";
   source: "personalized";
-  recommendationKind: "direct" | "expanded" | "common";
-  evidenceSelectionIds: readonly string[];
+  recommendation: RecommendationProvenance;
 }
 
 export interface Q10PersonalizationDraft {
@@ -18,3 +38,17 @@ export interface Q10PersonalizationDraft {
 }
 
 export const Q10_RECOMMENDATION_TARGET = { total: 14, direct: 6, expanded: 5, common: 3 } as const;
+
+export interface Q10RecommendationResult {
+  recommendations: readonly PersonalizedKeyword[];
+  basisFingerprint: string;
+  generator: "local" | "fallback";
+}
+
+export interface Q10RecommendationState extends Q10RecommendationResult {
+  invalidationCount: number;
+  notice: string;
+  // Reserved for phase 3. Phase 2 never generates or approves a sentence.
+  condensedSentence: string | null;
+  approvedSentence: string | null;
+}

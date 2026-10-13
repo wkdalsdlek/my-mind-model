@@ -3,6 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createCustomKeyword, QUESTION_DATA, SEMANTIC_PROFILES, type KeywordCapsule, type SelectedCapsule } from "@/lib/capsules";
 import type { QuestionResponseStatus } from "@/lib/questionnaire-state";
+import type { Q10RecommendationState } from "@/lib/personalization-contract";
+import Q10RecommendationDetails from "./Q10RecommendationDetails";
 import styles from "./CapsuleQuestionnaire.module.css";
 import { useCapsulePhysics } from "./useCapsulePhysics";
 import { useCapsuleDrag } from "./useCapsuleDrag";
@@ -13,6 +15,11 @@ interface Props {
   keywords: KeywordCapsule[];
   selected: SelectedCapsule[];
   responseStatus: QuestionResponseStatus;
+  personalization: Q10RecommendationState;
+  closingDraft: string;
+  onClosingDraftChange: (text: string) => void;
+  closingKeywordDraft: string;
+  onClosingKeywordDraftChange: (text: string) => void;
   busy: boolean;
   onSelect: (keyword: KeywordCapsule) => void;
   onRemove: (selectionId: string) => void;
@@ -26,10 +33,12 @@ function capsuleStyle(keyword: KeywordCapsule): CSSProperties {
   return { "--capsule-rgb": SEMANTIC_PROFILES[keyword.group].color } as CSSProperties;
 }
 
-export default function CapsuleQuestionnaire({ step, keywords, selected, responseStatus, busy, onSelect, onRemove, onCreate, onPrevious, onSkip, onNext }: Props) {
+export default function CapsuleQuestionnaire({ step, keywords, selected, responseStatus, personalization, closingDraft, onClosingDraftChange, closingKeywordDraft, onClosingKeywordDraftChange, busy, onSelect, onRemove, onCreate, onPrevious, onSkip, onNext }: Props) {
   const question = QUESTION_DATA[step];
   const closingQuestion = question.keywordMode === "personalized";
-  const [input, setInput] = useState("");
+  const [wordInput, setWordInput] = useState("");
+  const input = closingQuestion ? closingKeywordDraft : wordInput;
+  const setInput = closingQuestion ? onClosingKeywordDraftChange : setWordInput;
   const [announcement, setAnnouncement] = useState("");
   const [motionPaused, setMotionPaused] = useState(() => {
     try { return typeof window !== "undefined" && sessionStorage.getItem("mind-capsule-motion") === "paused"; }
@@ -139,6 +148,19 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, respons
             )}
           </div>
           <p className={styles.answerHint}>담은 캡슐을 누르면 다시 꺼낼 수 있어요.</p>
+          {closingQuestion && <Q10RecommendationDetails personalization={personalization} />}
+          {closingQuestion && <form className={styles.closingMessage} onSubmit={event => {
+            event.preventDefault();
+            if (busy || composing.current || !closingDraft.trim()) return;
+            select(createCustomKeyword(question.id, closingDraft, crypto.randomUUID()));
+            onClosingDraftChange("");
+          }}>
+            <label htmlFor="closing-message">단어보다 긴 마음은 문장으로 남겨도 좋아요</label>
+            <textarea id="closing-message" value={closingDraft} onChange={event => onClosingDraftChange(event.target.value)}
+              onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+              maxLength={1000} rows={3} disabled={busy} placeholder="마음에 남기고 싶은 문장을 직접 적어보세요" />
+            <button type="submit" disabled={busy || !closingDraft.trim()}>내 문장을 답변에 담기</button>
+          </form>}
         </div>
         <nav className={styles.navigation} aria-label="질문 이동">
           <button className={styles.previous} onClick={onPrevious} disabled={step === 0 || busy}>← 이전</button>
@@ -159,7 +181,7 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, respons
             {keywords.map((keyword) => (
               <div className={styles.capsuleSlot} key={keyword.id}>
                 <div className={styles.floatingCapsule} data-floating-id={keyword.id} style={capsuleStyle(keyword)}>
-                  <button className={`${styles.glassCapsule} ${styles.sourceCapsule} ${activeId === keyword.id ? styles.sourceActive : ""}`} style={capsuleStyle(keyword)} disabled={busy} title={keyword.label} aria-label={`${keyword.label} 캡슐 추가`} onPointerDown={(event) => start(event, keyword)} onClick={(event) => click(event.detail, keyword)}>
+                  <button className={`${styles.glassCapsule} ${styles.sourceCapsule} ${activeId === keyword.id ? styles.sourceActive : ""}`} style={capsuleStyle(keyword)} disabled={busy} title={keyword.recommendation ? `${keyword.label}\n${keyword.recommendation.reason}` : keyword.label} aria-label={`${keyword.label} 캡슐 추가`} onPointerDown={(event) => start(event, keyword)} onClick={(event) => click(event.detail, keyword)}>
                     <span className={styles.glassInterior} aria-hidden="true" />
                     <span className={styles.capsuleLabel}>{keyword.label}</span>
                   </button>
@@ -172,7 +194,7 @@ export default function CapsuleQuestionnaire({ step, keywords, selected, respons
           <label htmlFor="new-keyword">{closingQuestion ? "마음에 남기고 싶은 말을 띄워보세요" : "여기에 없는 마음도 괜찮아요"}</label>
           <div className={styles.inputShell}>
             <span className={styles.inputSpark} aria-hidden="true">✧</span>
-            <input id="new-keyword" value={input} onChange={(event) => setInput(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || composing.current || event.keyCode === 229)) event.preventDefault(); }} placeholder={closingQuestion ? "나만의 단어나 문장을 남겨보세요" : "나만의 단어를 띄워보세요"} maxLength={closingQuestion ? 200 : 16} disabled={busy} autoComplete="off" />
+            <input id="new-keyword" value={input} onChange={(event) => setInput(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || composing.current || event.keyCode === 229)) event.preventDefault(); }} placeholder="나만의 단어를 띄워보세요" maxLength={16} disabled={busy} autoComplete="off" />
             <button type="submit" disabled={!input.trim() || busy} aria-label="새 키워드 캡슐 생성">↵</button>
           </div>
           <p>단어를 적고 Enter · 같은 단어도 새로 띄울 수 있어요</p>

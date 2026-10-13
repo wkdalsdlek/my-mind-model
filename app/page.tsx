@@ -77,6 +77,9 @@ export default function Home() {
   const [questionnaire, dispatchQuestionnaire] = useReducer(questionnaireReducer, undefined, createQuestionnaireState);
   const { selections, responses } = questionnaire;
   const [keywordPools, setKeywordPools] = useState(createKeywordPools);
+  const [closingDraft, setClosingDraft] = useState("");
+  const [closingKeywordDraft, setClosingKeywordDraft] = useState("");
+  const closingKeywords = useMemo(() => [...questionnaire.personalization.recommendations, ...keywordPools[9]], [questionnaire.personalization.recommendations, keywordPools]);
   const answers = serializeLegacyAnswers(questionnaire);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResult, setShowResult] = useState(false); 
@@ -164,6 +167,8 @@ export default function Home() {
   const handleReset = () => {
     if(window.confirm("다시 처음부터 성찰하시겠습니까? 작성된 내용은 지워집니다.")) {
       setStep(0); dispatchQuestionnaire({ type: "reset" }); setKeywordPools(createKeywordPools()); setShowResult(false);
+      setClosingDraft("");
+      setClosingKeywordDraft("");
       setCurrentData({ ...currentData, comments: [] });
       setIsAnalysisOpen(false); setIsDetailedMode(false);
     }
@@ -200,9 +205,14 @@ export default function Home() {
         <CapsuleQuestionnaire
           key={step}
           step={step}
-          keywords={keywordPools[step]}
+          keywords={step === 9 ? closingKeywords : keywordPools[step]}
           selected={selections[step]}
           responseStatus={responses[step].status}
+          personalization={questionnaire.personalization}
+          closingDraft={closingDraft}
+          onClosingDraftChange={setClosingDraft}
+          closingKeywordDraft={closingKeywordDraft}
+          onClosingKeywordDraftChange={setClosingKeywordDraft}
           busy={isAnalyzing}
           onSelect={handleSelect}
           onRemove={handleRemove}

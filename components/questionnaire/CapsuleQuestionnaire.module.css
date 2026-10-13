@@ -87,6 +87,21 @@
 .emptyState > span:last-child { margin-top: 8px; color: #77829e; font-size: 10px; }
 .selectedList { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 12px 10px; }
 .answerHint { margin-top: 10px; font-size: 10px; color: #76809b; }
+.recommendationInfo { margin-top: 16px; color: #a6b1cb; font-size: 11px; line-height: 1.8; }
+.recommendationInfo > p + p { margin-top: 5px; color: #8593b1; }
+.recommendationNotice { border-left: 2px solid #b59af4; padding: 8px 10px; background: rgb(181 154 244 / 7%); border-radius: 6px; }
+.recommendationInfo details { margin-top: 8px; }
+.recommendationInfo summary { cursor: pointer; color: #c3badb; }
+.recommendationInfo ul { max-height: 260px; overflow-y: auto; list-style: none; margin-top: 10px; padding: 0; }
+.recommendationInfo li { padding: 10px 0; border-top: 1px solid rgb(182 182 236 / 10%); overflow-wrap: anywhere; }
+.recommendationInfo li > span { margin-left: 8px; color: #8d9bb9; }
+.recommendationInfo li > p { color: #949fba; }
+.closingMessage { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+.closingMessage label { color: #b6bdd1; font-size: 11px; line-height: 1.7; }
+.closingMessage textarea { width: 100%; resize: vertical; min-height: 90px; padding: 12px; border: 1px solid rgb(180 179 219 / 23%); border-radius: 12px; background: rgb(16 24 44 / 60%); color: #eef0f8; font: inherit; font-size: 16px; line-height: 1.6; }
+.closingMessage textarea:focus-visible { outline: 2px solid #b9b6e4; outline-offset: 2px; }
+.closingMessage > button { align-self: flex-end; padding: 9px 12px; border: 1px solid rgb(186 169 223 / 26%); border-radius: 10px; background: rgb(99 82 143 / 16%); color: #cfc9e4; font-size: 11px; cursor: pointer; }
+.closingMessage > button:disabled { opacity: .4; cursor: default; }
 .navigation { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; }
 .navigation button { border-radius: 12px; padding: 14px 18px; font-size: 12px; cursor: pointer; transition: background 180ms, opacity 180ms; }
 .previous { color: #a6aec4; border: 1px solid rgb(167 175 209 / 16%); background: transparent; }

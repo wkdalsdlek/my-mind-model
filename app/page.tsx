@@ -6,18 +6,9 @@ import { Sphere, MeshDistortMaterial, OrbitControls, GradientTexture } from "@re
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three"; 
 
-const QUESTIONS = [
-  "[에너지와 자아] 완벽하게 자유로운 주말 이틀이 주어졌을 때, 당신이 가장 '나답다'고 느끼는 시간의 풍경을 묘사해 주세요. 누구와 어디서 무엇을 하고 있나요?",
-  "[내면의 잔상] 당신의 마음을 가장 오랫동안 머물게 했던 생각이나 장면이 있다면 무엇인가요? 왜 그것이 당신에게 깊은 잔상을 남겼을까요?",
-  "[의사결정 방식] 매우 중요한 결정을 내려야 할 때, 당신은 '데이터(사실)'와 '사람들의 마음(감정)' 중 어느 쪽에 더 무게를 두나요? 당신의 경험을 예로 들어 설명해 주세요.",
-  "[위기 대응] 예상치 못한 실수로 계획이 완전히 틀어졌을 때, 당신의 머릿속에 가장 먼저 떠오르는 문장은 무엇인가요? 그 후 첫 번째로 취하는 행동은 무엇인가요?",
-  "[소통의 지향점] 당신이 생각하는 '가장 이상적인 대화'는 어떤 모습인가요? (예: 깊이 있는 토론, 가벼운 농담, 침묵이 어색하지 않은 관계 등)",
-  "[수용과 방어] 누군가 당신의 노력에 대해 비판을 했을 때, 당신이 그 비판을 수용하거나 거부하는 당신만의 기준은 무엇인가요?",
-  "[삶의 핵심 가치] 만약 당신의 삶을 한 권의 책으로 쓴다면, 사람들에게 기억되길 바라는 '가장 핵심적인 한 줄의 문장'은 무엇인가요?",
-  "[무조건적인 동기] 보상이 전혀 없더라도 당신이 기꺼이 시간과 노력을 쏟을 수 있는 일은 무엇인가요? 그 일이 당신에게 주는 의미는 무엇인가요?",
-  "[회복 탄력성] 마음이 몹시 지쳤을 때, 당신만의 '안전 기지(장소, 행동, 사람 등)'는 어디인가요? 그곳이 왜 당신을 편안하게 만드나요?",
-  "[변화와 유지] 나의 모습 중 가장 바꾸고 싶은 부분과, 그럼에도 불구하고 끝까지 지키고 싶은 부분은 각각 무엇인가요?"
-];
+import CapsuleQuestionnaire from "@/components/questionnaire/CapsuleQuestionnaire";
+import QuestionAtmosphere from "@/components/questionnaire/QuestionAtmosphere";
+import { createKeywordPools, QUESTIONS, serializeSelections, type KeywordCapsule, type SelectedCapsule } from "@/lib/capsules";
 
 interface MoodData {
   title?: string;
@@ -25,18 +16,6 @@ interface MoodData {
   distort: number; speed: number; wireframe: boolean; roughness: number; glowStrength: number; scale: number;
   comments: { analysis: string; detailedAnalysis: string; effect: string }[]; 
 }
-
-// 💡 새롭게 추가된 입력값 검사 함수 (숫자/기호 도배 차단)
-const isValidInput = (text: string) => {
-  const trimmed = text.trim();
-  // 1. 전체 글자 수가 10자 미만이면 실패
-  if (trimmed.length < 10) return false;
-  // 2. 완성된 한글(가-힣) 또는 알파벳(a-zA-Z)만 추출 (숫자, ㅋㅋㅋ, 특수기호 무시)
-  const meaningfulChars = trimmed.match(/[가-힣a-zA-Z]/g);
-  // 3. 의미 있는 문자가 최소 5글자 이상 포함되어 있지 않으면 실패
-  if (!meaningfulChars || meaningfulChars.length < 5) return false;
-  return true;
-};
 
 function SceneLights({ colors }: { colors: [string, string, string] }) {
   const light1 = useRef<THREE.PointLight>(null!);
@@ -94,7 +73,9 @@ function MindModel({ data }: { data: MoodData }) {
 
 export default function Home() {
   const [step, setStep] = useState(0); 
-  const [answers, setAnswers] = useState<string[]>(Array(10).fill("")); 
+  const [selections, setSelections] = useState<SelectedCapsule[][]>(() => QUESTIONS.map(() => []));
+  const [keywordPools, setKeywordPools] = useState(createKeywordPools);
+  const answers = serializeSelections(selections);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResult, setShowResult] = useState(false); 
 
@@ -117,27 +98,34 @@ export default function Home() {
   };
 
   const handleNext = () => {
-    // 💡 깐깐한 유효성 검사 적용
-    if (!isValidInput(answers[step])) { 
-      alert("의미 있는 단어를 포함하여 조금 더 자세히 적어주세요. (숫자/기호/초성 제외 한글 최소 5자 이상, 전체 10자 이상)"); 
-      return; 
-    }
-    if (step < 9) setStep(step + 1);
+    if (isAnalyzing || selections[step].length === 0) return;
+    if (step < QUESTIONS.length - 1) setStep(step + 1);
   };
 
-  const handlePrev = () => { if (step > 0) setStep(step - 1); };
+  const handlePrev = () => { if (!isAnalyzing && step > 0) setStep(step - 1); };
 
-  const handleAnswerChange = (text: string) => {
-    const newAnswers = [...answers];
-    newAnswers[step] = text;
-    setAnswers(newAnswers);
+  const handleSelect = (keyword: KeywordCapsule) => {
+    if (isAnalyzing) return;
+    const selection = { ...keyword, selectionId: crypto.randomUUID() };
+    setSelections((previous) => previous.map((items, index) => index === step ? [...items, selection] : items));
+  };
+
+  const handleRemove = (selectionId: string) => {
+    if (isAnalyzing) return;
+    setSelections((previous) => previous.map((items, index) => index === step ? items.filter((item) => item.selectionId !== selectionId) : items));
+  };
+
+  const handleCreateKeyword = (keyword: KeywordCapsule) => {
+    if (isAnalyzing) return;
+    setKeywordPools((previous) => previous.map((items, index) => index === step ? [...items, keyword] : items));
   };
 
   const handleAnalyze = async () => {
-    // 💡 마지막 답변에도 깐깐한 유효성 검사 적용
-    if (!isValidInput(answers[9])) { 
-      alert("마지막 답변입니다. 의미 있는 단어를 포함하여 조금 더 자세히 적어주세요."); 
-      return; 
+    if (isAnalyzing) return;
+    const unanswered = selections.findIndex((items) => items.length === 0);
+    if (unanswered !== -1) {
+      setStep(unanswered);
+      return;
     }
 
     setIsAnalyzing(true);
@@ -147,14 +135,19 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers, questions: QUESTIONS }), 
       });
-      if (!response.ok) throw new Error("API 요청 실패");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        alert(errorData?.code === "AI_NOT_CONFIGURED"
+          ? "AI 분석 서비스가 아직 설정되지 않았습니다. 관리자에게 문의해 주세요. 선택한 답변은 그대로 유지됩니다."
+          : "분석 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
       const data = await response.json();
       setCurrentData({ ...data, wireframe: true });
       setShowResult(true); 
       setIsAnalysisOpen(false); 
-    } catch (error) {
-      console.error("AI 에러:", error);
-      alert("분석 중 문제가 발생했습니다.");
+    } catch {
+      alert("분석 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요. 선택한 답변은 그대로 유지됩니다.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -162,7 +155,7 @@ export default function Home() {
 
   const handleReset = () => {
     if(window.confirm("다시 처음부터 성찰하시겠습니까? 작성된 내용은 지워집니다.")) {
-      setStep(0); setAnswers(Array(10).fill("")); setShowResult(false);
+      setStep(0); setSelections(QUESTIONS.map(() => [])); setKeywordPools(createKeywordPools()); setShowResult(false);
       setCurrentData({ ...currentData, comments: [] });
       setIsAnalysisOpen(false); setIsDetailedMode(false);
     }
@@ -192,31 +185,23 @@ export default function Home() {
     );
   }
 
-  // 2️⃣ 질문 화면
+  // Keyword selections are serialized only at the boundary with the existing API.
   if (!showResult) {
-    const { category, formattedText } = formatQuestion(QUESTIONS[step]);
     return (
-      <div style={{ width: "100vw", height: "100vh", backgroundColor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white", padding: "20px" }}>
-        <div style={{ width: "100%", maxWidth: "600px" }}>
-          <p style={{ color: "#A316FD", fontWeight: "bold", marginBottom: "10px", fontSize: "14px" }}>내면 탐구 {step + 1} / 10</p>
-          <div style={{ width: "100%", height: "4px", backgroundColor: "#333", borderRadius: "2px", marginBottom: "30px" }}>
-            <div style={{ width: `${((step + 1) / 10) * 100}%`, height: "100%", backgroundColor: "#A316FD", borderRadius: "2px", transition: "width 0.3s ease" }} />
-          </div>
-          <div style={{ marginBottom: "30px" }}>
-            {category && <div style={{ display: "inline-block", padding: "6px 16px", backgroundColor: "rgba(163, 22, 253, 0.15)", color: "#c879ff", borderRadius: "20px", fontSize: "14px", fontWeight: "bold", marginBottom: "15px", border: "1px solid rgba(163, 22, 253, 0.3)" }}>{category}</div>}
-            <h2 style={{ fontSize: "22px", lineHeight: "1.6", wordBreak: "keep-all", whiteSpace: "pre-wrap" }}>{formattedText}</h2>
-          </div>
-          <textarea value={answers[step]} onChange={(e) => handleAnswerChange(e.target.value)} placeholder="당신의 솔직한 마음을 편안하게 적어주세요." style={{ width: "100%", height: "150px", padding: "20px", borderRadius: "15px", border: "1px solid #444", backgroundColor: "#111", color: "white", fontSize: "16px", outline: "none", resize: "none", marginBottom: "30px", lineHeight: "1.6" }} />
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button onClick={handlePrev} disabled={step === 0} style={{ padding: "12px 30px", borderRadius: "20px", border: "1px solid #555", backgroundColor: "transparent", color: step === 0 ? "#555" : "white", cursor: step === 0 ? "not-allowed" : "pointer" }}>이전</button>
-            {step < 9 ? (
-              <button onClick={handleNext} style={{ padding: "12px 40px", borderRadius: "20px", border: "none", backgroundColor: "#FFFFFF", color: "#000000", fontWeight: "bold", cursor: "pointer", boxShadow: "0 0 15px rgba(255, 255, 255, 0.2)" }}>다음</button>
-            ) : (
-              <button onClick={handleAnalyze} disabled={isAnalyzing} style={{ padding: "12px 40px", borderRadius: "20px", border: "none", backgroundColor: "#FF1493", color: "white", fontWeight: "bold", cursor: isAnalyzing ? "not-allowed" : "pointer", boxShadow: "0 0 15px rgba(255, 20, 147, 0.4)" }}>{isAnalyzing ? "오로라 생성 중..." : "결과 확인 ✨"}</button>
-            )}
-          </div>
-        </div>
-      </div>
+      <QuestionAtmosphere step={step}>
+        <CapsuleQuestionnaire
+          key={step}
+          step={step}
+          keywords={keywordPools[step]}
+          selected={selections[step]}
+          busy={isAnalyzing}
+          onSelect={handleSelect}
+          onRemove={handleRemove}
+          onCreate={handleCreateKeyword}
+          onPrevious={handlePrev}
+          onNext={step === QUESTIONS.length - 1 ? handleAnalyze : handleNext}
+        />
+      </QuestionAtmosphere>
     );
   }
 

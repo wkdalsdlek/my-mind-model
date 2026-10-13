@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 export async function POST(req: Request) {
   try {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          code: "AI_NOT_CONFIGURED",
+          error: "AI 분석 서비스가 아직 설정되지 않았습니다. 관리자에게 문의해 주세요. 선택한 답변은 그대로 유지됩니다.",
+        },
+        { status: 503 },
+      );
+    }
+
+    // Initialize only after checking server configuration, inside the error boundary.
+    const openai = new OpenAI({ apiKey });
     const { answers, questions } = await req.json();
 
     const qnaText = answers.map((ans: string, i: number) => `질문 ${i + 1}: ${questions[i]}\n답변 ${i + 1}: ${ans}`).join("\n\n");
@@ -63,6 +72,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json(JSON.parse(response.choices[0].message.content || "{}"));
   } catch {
-    return NextResponse.json({ error: "분석 실패" }, { status: 500 });
+    // Never send or log raw SDK errors: they may contain sensitive request details.
+    return NextResponse.json(
+      { code: "ANALYSIS_FAILED", error: "분석 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요." },
+      { status: 500 },
+    );
   }
 }

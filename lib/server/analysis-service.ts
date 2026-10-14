@@ -1,8 +1,12 @@
 import { QUESTION_DATA, type QuestionId } from "../question-data";
 import { QUESTIONS } from "../capsules";
 
-export const ANALYSIS_MODEL = "gpt-4o-mini";
-export const ANALYSIS_MAX_COMPLETION_TOKENS = 8000;
+export const ANALYSIS_MODEL = "gpt-6.1-sol";
+export const ANALYSIS_REASONING_EFFORT = "medium";
+// Shared by internal reasoning and visible JSON, not a visible-output allowance.
+export const ANALYSIS_MAX_COMPLETION_TOKENS = 25000;
+// Standard, short-context USD/1M tokens; reviewed 2026-10-14. Billing may differ.
+export const ANALYSIS_TOKEN_PRICES = { input: 2, cachedInput: 0.1, output: 10 } as const;
 export const ANALYSIS_MAX_ATTEMPTS = 2;
 export const ANALYSIS_INPUT_LIMITS = { bodyBytes: 131072, perAnswer: 6000, totalText: 26000, modelCharacters: 80000 } as const;
 const questionIds = QUESTION_DATA.map(q => q.id);
@@ -104,17 +108,30 @@ export function validateAnalysisInput(value: unknown): AnalysisInput {
   return { questions: QUESTION_DATA.map((q, i) => ({ questionId: q.id, prompt: q.prompt, answerIntent: q.answerIntent,
     status: q.allowSkip && answers[i] === SKIPPED_ANSWER ? "skipped" : "provided", answer: answers[i] })) };
 }
+export interface AnalysisTokenUsage {
+  promptTokens?: number; completionTokens?: number; totalTokens?: number;
+  reasoningTokens?: number; cachedPromptTokens?: number;
+}
+const tokenCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+/** Completion tokens already include reasoning. Never add reasoning a second time. */
+export function estimateAnalysisStandardCostUsd(usage: AnalysisTokenUsage): number | undefined {
+  const { promptTokens, completionTokens } = usage;
+  const cached = usage.cachedPromptTokens === undefined ? 0 : usage.cachedPromptTokens;
+  if (!tokenCount(promptTokens) || !tokenCount(completionTokens) || !tokenCount(cached) || cached > promptTokens) return;
+  return ((promptTokens - cached) * ANALYSIS_TOKEN_PRICES.input + cached * ANALYSIS_TOKEN_PRICES.cachedInput
+    + completionTokens * ANALYSIS_TOKEN_PRICES.output) / 1000000;
+}
 export interface AnalysisCompletion {
   content: string | null; finishReason: string | null; refused: boolean;
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  usage?: AnalysisTokenUsage;
 }
-export interface AnalysisServerDiagnostic {
+export interface AnalysisServerDiagnostic extends AnalysisTokenUsage {
   attempt: 1 | 2;
   outcome: "success" | "invalid-output" | "generation-failed" | "cancelled";
   finishReason: "stop" | "length" | "content_filter" | "tool_calls" | "function_call" | "unknown";
   code?: AnalysisErrorCode;
   expectedCount: number;
-  receivedCount?: number; promptTokens?: number; completionTokens?: number; totalTokens?: number; providerStatus?: number;
+  receivedCount?: number; providerStatus?: number;
   validationReason?: AnalysisValidationReason | "output-interrupted" | "model-refusal";
 }
 /** Only fixed vocabulary and numeric metadata, never content/SDK errors. */
@@ -122,13 +139,16 @@ export function logAnalysisServerDiagnostic(metadata: AnalysisServerDiagnostic):
   if (process.env.NODE_ENV !== "development" || ![1, 2].includes(metadata.attempt)
     || !["success", "invalid-output", "generation-failed", "cancelled"].includes(metadata.outcome)
     || !["stop", "length", "content_filter", "tool_calls", "function_call", "unknown"].includes(metadata.finishReason)) return;
-  const safe: Record<string, number | string> = { attempt: metadata.attempt, outcome: metadata.outcome, finishReason: metadata.finishReason, expectedCount: questionIds.length };
+  const safe: Record<string, number | string> = { attempt: metadata.attempt, outcome: metadata.outcome, finishReason: metadata.finishReason, expectedCount: questionIds.length,
+    model: ANALYSIS_MODEL, reasoningEffort: ANALYSIS_REASONING_EFFORT, maxCompletionTokens: ANALYSIS_MAX_COMPLETION_TOKENS };
   if (metadata.code && ["AI_NOT_CONFIGURED", "ANALYSIS_FAILED", "ANALYSIS_RESPONSE_INVALID", "ANALYSIS_COMMENTS_COUNT_MISMATCH"].includes(metadata.code)) safe.code = metadata.code;
   if (metadata.validationReason && ["invalid-json", "duplicate-key", "invalid-shape", "comments-count-mismatch", "question-id-mismatch", "duplicate-question", "empty-analysis", "invalid-field", "output-interrupted", "model-refusal"].includes(metadata.validationReason)) safe.validationReason = metadata.validationReason;
-  for (const key of ["receivedCount", "promptTokens", "completionTokens", "totalTokens", "providerStatus"] as const) {
+  for (const key of ["receivedCount", "promptTokens", "completionTokens", "totalTokens", "providerStatus", "reasoningTokens", "cachedPromptTokens"] as const) {
     const value = metadata[key];
-    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) safe[key] = value;
+    if (tokenCount(value)) safe[key] = value;
   }
+  const estimatedCost = estimateAnalysisStandardCostUsd(metadata);
+  if (estimatedCost !== undefined) safe.estimatedStandardCostUsd = estimatedCost;
   console.info("[analysis-server]", safe);
 }
 interface AnalysisDependencies {
@@ -183,7 +203,8 @@ export function createAnalysisHandler(deps: AnalysisDependencies) {
       const finishReason = ["stop", "length", "content_filter", "tool_calls", "function_call"].includes(completion.finishReason ?? "")
         ? completion.finishReason as AnalysisServerDiagnostic["finishReason"] : "unknown";
       const metadata: AnalysisServerDiagnostic = { attempt, outcome: "invalid-output", finishReason, expectedCount: questionIds.length,
-        promptTokens: completion.usage?.promptTokens, completionTokens: completion.usage?.completionTokens, totalTokens: completion.usage?.totalTokens };
+        promptTokens: completion.usage?.promptTokens, completionTokens: completion.usage?.completionTokens, totalTokens: completion.usage?.totalTokens,
+        reasoningTokens: completion.usage?.reasoningTokens, cachedPromptTokens: completion.usage?.cachedPromptTokens };
       if (signal.aborted) { diagnostic({ ...metadata, outcome: "cancelled" }); return fail("ANALYSIS_FAILED", 408); }
       if (completion.refused || finishReason !== "stop") {
         diagnostic({ ...metadata, code: "ANALYSIS_RESPONSE_INVALID", validationReason: completion.refused ? "model-refusal" : "output-interrupted" });

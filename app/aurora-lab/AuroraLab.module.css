@@ -1,0 +1,65 @@
+.lab { position: relative; isolation: isolate; width: 100%; height: 100dvh; min-height: 360px; overflow: hidden; color: #e7e5f2; background: #080d23; font-family: Arial, Helvetica, sans-serif; }
+.vignette { position: absolute; inset: 0; pointer-events: none; z-index: 1; background: linear-gradient(90deg, rgb(6 11 29 / 40%), transparent 33%, transparent 70%, rgb(6 11 29 / 15%)), linear-gradient(180deg, rgb(6 11 29 / 20%), transparent 30%, transparent 65%, rgb(6 11 29 / 55%)); }
+.header { position: absolute; z-index: 2; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 30px 38px; }
+.brand { display: flex; align-items: center; gap: 13px; color: #d8d2e8; font-size: 10px; letter-spacing: 2px; text-decoration: none; }
+.brand > span:first-child { font-size: 27px; color: #b5a0db; }
+.brand small { display: block; margin-top: 7px; color: #7d89a7; font-size: 10px; letter-spacing: 0; }
+.headerRight { display: flex; align-items: center; gap: 24px; }
+.prototype { color: #8a9abc; font-size: 9px; letter-spacing: 1.8px; }
+.headerRight > a { text-decoration: none; color: #b8bfd1; font-size: 11px; border: 1px solid rgb(173 177 216 / 20%); padding: 10px 13px; border-radius: 30px; background: rgb(12 20 38 / 25%); }
+.headerRight > a > span { margin-left: 8px; }
+.introduction { position: absolute; left: 4.4%; top: 20%; z-index: 2; pointer-events: none; }
+.eyebrow { color: #97a6c7; letter-spacing: 2.5px; font-size: 9px; margin-bottom: 20px; }
+.introduction h1 { font-size: clamp(27px, 3.2vw, 45px); line-height: 1.65; letter-spacing: -1.6px; font-weight: 300; text-shadow: 0 4px 24px rgb(3 8 26 / 40%); }
+.introduction h1 em { font-style: normal; color: #c1badc; }
+.description { margin-top: 20px; color: #8d9abb; font-size: 11px; line-height: 2; }
+.panel { position: absolute; z-index: 3; top: 110px; right: 32px; width: 286px; max-height: calc(100dvh - 154px); overflow-y: auto; border: 1px solid rgb(167 164 214 / 20%); border-top-color: rgb(189 188 229 / 32%); border-radius: 20px; background: linear-gradient(150deg, rgb(26 29 52 / 78%), rgb(10 17 34 / 75%)); backdrop-filter: blur(20px); box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 16px 60px rgb(0 0 0 / 20%); scrollbar-width: thin; scrollbar-color: #4a496a transparent; }
+.panelHeader { display: flex; justify-content: space-between; align-items: center; padding: 20px 22px 16px; }
+.panelHeader > div > span { color: #8a91b2; font-size: 8px; letter-spacing: 2px; }
+.panelHeader h2 { font-weight: 400; margin-top: 8px; color: #d5cfe7; font-size: 15px; }
+.collapse { width: 30px; height: 30px; border: 1px solid rgb(164 163 205 / 17%); border-radius: 50%; color: #adadce; background: rgb(58 50 89 / 20%); font-size: 20px; cursor: pointer; }
+.panelContent { padding: 0 22px 22px; }
+.cameraSection { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid rgb(161 168 209 / 12%); }
+.cameraSection summary { color: #c7c5dc; font-size: 11px; cursor: pointer; }
+.cameraSection summary span { float: right; color: #8b9db9; font-size: 9px; margin-top: 1px; }
+.returnFront { display: flex; justify-content: space-between; width: 100%; margin-top: 10px; padding: 9px 11px; border: 1px solid rgb(164 167 210 / 20%); border-radius: 9px; color: #c7c8de; background: rgb(69 60 98 / 16%); font-size: 10px; cursor: pointer; }
+.returnFront:disabled { cursor: default; opacity: .5; }
+.cameraStatus, .cameraHint { font-size: 9px; line-height: 1.8; margin-top: 10px; color: #a1afc9; }
+.cameraHint { color: #7e8eac; margin-top: 5px; }
+.cameraHint span { display: block; margin-top: 5px; }
+.cameraSection summary:focus-visible { outline: 2px solid #b9a9e2; outline-offset: 4px; }
+.panel fieldset { border: 0; min-width: 0; }
+.panel legend { color: #929fbc; font-size: 10px; margin-bottom: 10px; }
+.presetGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preset { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 13px 11px; border: 1px solid rgb(154 161 207 / 16%); border-radius: 11px; background: rgb(34 37 60 / 38%); color: #a5aec8; cursor: pointer; font-size: 10px; transition: border-color 150ms, background 150ms; }
+.preset:hover { border-color: #8981ad; }
+.activePreset { border-color: #9f93c8; color: #e1d8f1; background: rgb(91 71 127 / 22%); box-shadow: inset 0 0 20px rgb(163 135 211 / 6%); }
+.swatches { display: flex; gap: 4px; }
+.swatches i { display: block; width: 7px; height: 7px; border-radius: 50%; opacity: .83; }
+.presetDescription { color: #a0a8c5; font-size: 10px; line-height: 1.8; margin-top: 14px; }
+.colorShares { margin-block: 10px 20px; display: flex; flex-wrap: wrap; gap: 7px 10px; }
+.colorShares > span { display: flex; align-items: center; gap: 5px; font-size: 9px; color: #8795b3; }
+.colorShares i { width: 4px; height: 4px; border-radius: 50%; }
+.selectRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.selectRow label, .toggle, .layer { color: #a4b0cb; font-size: 11px; }
+.selectRow select { min-width: 95px; color: #c7c8de; background: #1a2038; border: 1px solid rgb(164 167 210 / 20%); border-radius: 8px; padding: 8px; font-size: 12px; }
+.toggle { display: flex; align-items: center; justify-content: space-between; margin-block: 18px 22px; cursor: pointer; }
+.toggle small { display: block; color: #8292b0; font-size: 9px; margin-top: 5px; }
+.toggle input, .layer input { accent-color: #aa9acd; width: 15px; height: 15px; cursor: pointer; }
+.layers { padding-top: 15px !important; border-top: 1px solid rgb(161 168 209 / 12%) !important; }
+.layer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 7px; cursor: pointer; }
+.diagnostics { margin-top: 16px; padding: 12px; border: 1px solid rgb(135 162 184 / 14%); background: rgb(48 89 107 / 7%); border-radius: 10px; }
+.diagnostics span, .diagnostics small { display: block; color: #8299b7; font-size: 9px; line-height: 1.8; }
+.diagnostics strong { display: block; margin-block: 5px; font-size: 12px; color: #b6cfdf; font-weight: 400; }
+.labNote { margin-top: 16px; color: #7e8ba9; font-size: 9px; line-height: 1.9; }
+.footer { position: absolute; bottom: 30px; left: 4.4%; right: 350px; z-index: 2; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; pointer-events: none; }
+.footer > div { display: flex; align-items: center; gap: 16px; }
+.presetNumber { color: #7c8baf; font-size: 28px; font-weight: 300; letter-spacing: -1px; }
+.footer strong { color: #c2cae0; font-size: 12px; font-weight: 400; letter-spacing: 1px; }
+.footer p { margin-top: 7px; color: #7e8eaf; font-size: 10px; }
+.gesture { color: #8092b6; font-size: 9px; white-space: nowrap; }
+.gesture > span { margin-left: 8px; }
+.lab a:focus-visible, .lab button:focus-visible, .lab select:focus-visible, .lab input:focus-visible { outline: 2px solid #b9a9e2; outline-offset: 4px; }
+@media (max-width: 1100px) { .introduction { top: 17%; } .introduction h1 { font-size: 28px; } .description { max-width: 190px; font-size: 10px; } .gesture { display: none; } .panel { right: 20px; width: 264px; } }
+@media (max-width: 767px) { .header { padding: 18px 20px; align-items: flex-start; } .brand { gap: 8px; font-size: 8px; letter-spacing: 1.4px; } .brand small { font-size: 8px; } .headerRight { display: block; text-align: right; } .prototype { display: block; margin-bottom: 9px; font-size: 7px; } .headerRight > a { display: block; padding: 7px 10px; font-size: 9px; } .introduction { top: 15%; left: 22px; } .eyebrow { margin-bottom: 10px; font-size: 7px; } .introduction h1 { font-size: 25px; line-height: 1.55; } .description { display: none; } .panel { top: auto; bottom: 15px; left: 15px; right: 15px; width: auto; max-height: 39dvh; border-radius: 17px; } .panelHeader { padding: 13px 18px; } .panelHeader > div { display: flex; align-items: center; gap: 12px; } .panelHeader h2 { font-size: 13px; margin: 0; } .panelContent { padding: 0 18px 18px; } .presetGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .preset { padding: 10px 7px; font-size: 8px; gap: 8px; } .footer { left: 22px; right: 22px; bottom: calc(39dvh + 30px); } .presetNumber { font-size: 22px; } .footer p { display: none; } .footer strong { font-size: 10px; } }
+@media (prefers-reduced-motion: reduce) { .preset { transition: none; } }

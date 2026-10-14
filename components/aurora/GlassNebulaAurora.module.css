@@ -1,0 +1,11 @@
+.stage { position: absolute; inset: 0; background: #080d23; }
+.stage canvas { touch-action: none; }
+.fallback { position: absolute; inset: 0; overflow: hidden; background: radial-gradient(ellipse at 56% 48%, #24264c 0%, #10172e 45%, #080d23 85%); }
+.fallbackArtwork { position: absolute; width: min(85vw, 950px); height: 350px; left: 50%; top: 40%; transform: translate(-50%, -50%); }
+.fallbackArtwork span { position: absolute; width: 100%; height: 65%; border: 35px solid; border-radius: 45% 65% 50% 70%; filter: blur(16px); opacity: .22; }
+.fallbackMessage { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%); text-align: center; width: min(90%, 440px); color: #ddd9eb; }
+.fallbackMessage > p { font-size: 14px; line-height: 1.8; }
+.fallbackMessage > span { display: block; margin-top: 7px; color: #939cbd; font-size: 11px; line-height: 1.8; }
+.fallbackMessage button { margin-top: 16px; padding: 9px 14px; border: 1px solid #686287; border-radius: 20px; color: #d8d1e9; cursor: pointer; }
+.invalid { display: grid; place-content: center; height: 100%; padding: 28px; background: #080d23; color: #f1c8da; font-size: 14px; }
+@media (max-width: 767px) { .fallbackArtwork { top: 34%; height: 260px; } .fallbackMessage { bottom: 45%; } }

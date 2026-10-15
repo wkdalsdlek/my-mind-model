@@ -4,11 +4,12 @@ import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, MathUtils, Mesh, NormalBlending, ShaderMaterial, Vector2, Vector4 } from "three";
 import { auroraEnergyProfiles, createAuroraEnergyEvent, updateAuroraEnergyEvent, type AuroraEnergyEvent } from "@/lib/aurora-energy";
-import { advanceAuroraMotionClock, AURORA_MOTION_WEIGHTS, auroraFlowBudget, auroraPaletteColors, createAuroraMotionClock,
+import { advanceAuroraMotionClock, AURORA_MOTION_WEIGHTS, auroraFlowBudget, createAuroraMotionClock,
   type AuroraAppearance, type AuroraFlowMode, type AuroraMotionClock, type AuroraQualityBudget } from "@/lib/aurora-types";
 import { auroraCurtainMistShape, auroraLoopMistShape, auroraLoopShapes, auroraRibbonShapes, createAuroraRibbonData, updateAuroraFieldPose, updateAuroraRibbonPose,
   type AuroraRibbonPose, type AuroraRibbonShape } from "@/lib/aurora-geometry";
 import { ribbonFragmentShader, ribbonVertexShader } from "./aurora-shaders";
+import { auroraRibbonVisualParameters } from "@/lib/aurora-ribbon-layout";
 import { useAuroraResourceCleanup } from "./useAuroraResourceCleanup";
 
 interface Props { appearance: AuroraAppearance; budget: AuroraQualityBudget; time: RefObject<number>; flowMode: AuroraFlowMode; reducedMotion: boolean }
@@ -31,11 +32,8 @@ function Ribbon({ shape, appearance, segments, rows, time, active, clock, reduce
   }, [shape, segments, rows]);
   useAuroraResourceCleanup(geometry);
   const colors = useMemo(() => {
-    const palette = auroraPaletteColors(appearance.palette), a = shape.colorIndex, b = (a + 1) % palette.length;
-    const coreShare = shape.kind === "loop" ? 0.58 : 0.95;
-    const mistShare = shape.kind === "loop" ? 0.58 * 0.34 : 0.24;
-    return { a: new Color(palette[a]), b: new Color(palette[b]),
-      opacity: (0.24 + appearance.palette[a].weight * 0.24) * (mist ? mistShare : coreShare), mix: appearance.palette[b].weight };
+    const visual = auroraRibbonVisualParameters(appearance.palette, shape, mist);
+    return { a: new Color(visual.colorA.color), b: new Color(visual.colorB.color), opacity: visual.targetOpacity, mix: visual.baseMix };
   }, [appearance.palette, shape, mist]);
   // Owned uniform storage survives presets so colors and amplitude ease in place.
   const uniforms = useMemo(() => ({

@@ -292,6 +292,7 @@ const externals = {
   "@/components/aurora/GlassNebulaAurora": props => { rendererProps = props; return React.createElement("div", { "data-aurora-test": true }); },
   "@/components/aurora/useAuroraBrowserSignals": { useAuroraBrowserSignals: () => ({ reduced: false }) },
   "@/lib/question-data": { QUESTION_DATA }, "./AuroraResultScreen.module.css": {},
+  "@/lib/aurora-ribbon-meaning": loadModule("lib/aurora-ribbon-meaning.ts"),
 };
 runInThisContext(`(function(require, exports) { ${outputText}\n})`)(id => { assert.ok(Object.hasOwn(externals, id), id); return externals[id]; }, exports);
 function markup(state) { return renderToStaticMarkup(React.createElement(exports.default, { result: { snapshot: snapshot(state), comments: readAuroraAnalysisComments(payload()) }, onReset: () => {} })); }
@@ -315,4 +316,13 @@ test("multiline and long approved titles are preserved and rendered safely as te
   assert.ok(html.includes("&lt;script&gt;\n"));
   assert.ok(html.includes("내가 직접 남긴 긴 문장".repeat(60)));
   assert.equal(html.includes("<script>"), false);
+});
+
+test("immersive result exposes exactly one accessible real-ID beacon per active mapped ribbon",()=>{
+  const state=approve(choose(choose(choose(complete(),0,2),0,3),0,12)),html=markup(state);
+  const map=loadModule("lib/aurora-ribbon-meaning.ts").buildAuroraRibbonMeaningFromResult({snapshot:snapshot(state),comments:readAuroraAnalysisComments(payload())});
+  const ids=Array.from(html.matchAll(/data-beacon-id="([^"]+)"/g),m=>m[1]);
+  assert.deepEqual(ids,map.ribbons.filter(r=>r.active).map(r=>r.ribbonId));assert.equal(new Set(ids).size,ids.length);
+  assert.ok(html.includes('aria-label="리본 빛 선택점"'));assert.ok(html.includes('data-experience="universe"'));
+  assert.ok(rendererProps.beaconHost);assert.equal(rendererProps.selectedRibbonId,null);
 });

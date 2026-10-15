@@ -1,3 +1,4 @@
+import { auroraRibbonIdentityProfile, type AuroraRibbonIdentityProfile } from "./aurora-ribbon-identity";
 import { auroraCurtainMistShape, auroraLoopMistShape, auroraLoopShapes, auroraRibbonShapes, type AuroraRibbonShape } from "./aurora-geometry";
 import { AURORA_DEFAULT_FLOW_MODE, auroraFlowBudget, auroraPaletteColors, auroraQualityBudget, validateAuroraAppearance,
   type AuroraAppearance, type AuroraFlowMode, type AuroraQuality } from "./aurora-types";
@@ -25,6 +26,8 @@ export interface AuroraRibbonLayer {
   rows: number;
   shape: AuroraRibbonShape;
   visual: ReturnType<typeof auroraRibbonVisualParameters>;
+  /** Additive 5-C-3 explanation contract. No changes to meaning shares or shape. */
+  identityProfile?: AuroraRibbonIdentityProfile;
 }
 export interface AuroraRibbonSlot {
   ribbonId: AuroraRibbonId;
@@ -40,7 +43,8 @@ export function createAuroraRibbonLayout(appearance: AuroraAppearance, quality: 
   if (!["low", "balanced", "high"].includes(quality)) throw new Error("INVALID_AURORA_RIBBON_QUALITY");
   const budget = auroraQualityBudget(quality), flow = auroraFlowBudget(flowMode, budget);
   const layer = (renderKey: string, shape: AuroraRibbonShape, mist: boolean, segments: number, rows: number): AuroraRibbonLayer =>
-    ({ renderKey, shape, mist, segments, rows, visual: auroraRibbonVisualParameters(appearance.palette, shape, mist) });
+    { const visual = auroraRibbonVisualParameters(appearance.palette, shape, mist);
+      return { renderKey, shape, mist, segments, rows, visual, identityProfile: auroraRibbonIdentityProfile(shape, visual) }; };
   const curtains = auroraRibbonShapes(appearance).map((shape, slot): AuroraRibbonSlot => ({
     ribbonId: auroraRibbonId("curtain", slot), slot, kind: "curtain", active: true,
     layers: [layer(`curtain-${slot}`, shape, false, budget.segments, budget.rows),

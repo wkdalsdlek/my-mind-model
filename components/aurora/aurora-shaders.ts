@@ -51,6 +51,10 @@ void main() {
 export const ribbonFragmentShader = `
 uniform vec3 uColorA, uColorB;
 uniform float uTime, uPhase, uOpacity, uFlow, uMix, uClosed, uLoop, uMist, uVisibility;
+uniform float uMacroCenter, uMacroSpan, uMacroAmount;
+uniform float uPolish;
+uniform vec4 uGlassProfile;
+uniform vec2 uColorProfile, uMistProfile;
 varying vec2 vUv;
 varying vec3 vViewNormal, vViewPosition;
 ${auroraEnergyShader}
@@ -99,7 +103,11 @@ void main() {
   vec2 warp = vec2(ribbonNoise(p + 1.7), ribbonNoise(p * 0.83 + 8.4)) - 0.5;
   float cloud = ribbonFbm(p + warp * 1.8);
   float blend = clamp(uMix + (ribbonV - 0.5) * 0.62 + (cloud - 0.5) * 0.6 + warp.y * 0.16, 0.0, 1.0);
-  vec3 color = mix(uColorA, uColorB, blend);
+  // Preserve both real endpoints. Reduced cloud mixing reveals their spatial
+  // separation; the narrow core uses the higher-weight endpoint of THIS pair.
+  float clearBlend = clamp(uMix + (ribbonV - 0.5) * uGlassProfile.w + (cloud - 0.5) * 0.22 + warp.y * 0.1, 0.0, 1.0);
+  vec3 color = mix(uColorA, uColorB, mix(blend, clearBlend, uPolish));
+  vec3 glassTint = color;
   vec3 iridescence = mix(uColorB, uColorA, 0.5 + 0.5 * sin(fresnel * 4.5 + cloud * 3.0 + uPhase));
   float loopPresence = mix(1.0, 0.16 + 0.84 * smoothstep(0.28, 0.68, cloud), uLoop);
   vec3 energy = ribbonEnergy(vUv.x);
@@ -113,14 +121,30 @@ void main() {
     color *= 0.65 + energy.x * 0.45 + energy.y * 0.5;
     density *= 0.6 + energy.z * 0.2 + energy.x * 0.25;
     loopPresence = mix(loopPresence, 0.65, 0.45);
+    density *= mix(1.0, mix(uMistProfile.x, uMistProfile.y, uMacroAmount), uPolish);
   } else {
+    float center = 0.5 + (cloud - 0.5) * 0.11 + 0.035 * sin(ribbonU * 4.7 + uPhase - uTime * uFlow * 0.07);
+    float coreDistance = (ribbonV - center) / (0.065 + cloud * 0.05);
+    float core = exp(-coreDistance * coreDistance);
+    if (uPolish > 0.5) {
+      // A quiet, continuous vein and soft glass edges survive inactive streams.
+      // They use the SAME periodic UVs, geometry, palette and actual energy field.
+      float veinCenter = mix(center, 0.5 + abs(center - 0.5) * 0.5, uLoop);
+      float fineCore = exp(-pow((ribbonV - veinCenter) / uGlassProfile.x, 2.0));
+      float rimLine = exp(-pow((abs(vUv.y - 0.5) - 0.32) / 0.035, 2.0));
+      vec3 coreTint = mix(uColorA, uColorB, uColorProfile.x);
+      vec3 edgeTint = mix(uColorA, uColorB, 1.0 - uColorProfile.x);
+      color = glassTint * (0.27 + cloud * 0.09 + core * (0.32 + 1.85 * energy.x + energy.y))
+        + coreTint * fineCore * (uGlassProfile.y + energy.x * 0.65)
+        + edgeTint * rimLine * uGlassProfile.z + iridescence * fresnel * 0.06;
+      density = (0.18 + cloud * 0.14 + core * 0.14 + fineCore * 0.42 + rimLine * 0.15)
+        * mix(0.68, 1.0, faceWeight) * (0.84 + energy.x * 0.3 + energy.y * 0.16);
+      loopPresence = mix(loopPresence, max(loopPresence, 0.7), max(fineCore, rimLine * 0.6));
+    } else {
     float grain = ribbonFbm(p * vec2(3.7, 0.68) + warp * 2.5);
     float filamentPhase = ribbonU * (58.0 + uPhase * 3.0) + warp.x * 9.0 + cloud * 11.0
       + ribbonV * (3.0 + warp.y * 5.0) - uTime * uFlow * 0.24;
     float filaments = smoothstep(0.48, 0.88, grain) * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(filamentPhase), 3.0));
-    float center = 0.5 + (cloud - 0.5) * 0.11 + 0.035 * sin(ribbonU * 4.7 + uPhase - uTime * uFlow * 0.07);
-    float coreDistance = (ribbonV - center) / (0.065 + cloud * 0.05);
-    float core = exp(-coreDistance * coreDistance);
     // Keep curtain colors; a softer colored loop core supports them without a hard rim.
     color *= 0.34 + cloud * 0.13 + core * (0.26 + mix(2.05, 1.25, uLoop) * energy.x + energy.y * 1.3) * mix(0.52, 1.0, faceWeight)
       + filaments * (0.04 + energy.x * 0.24);
@@ -130,8 +154,17 @@ void main() {
     float bodyPresence = mix(0.28 + 0.72 * smoothstep(0.22, 0.7, cloud), 1.0, faceWeight);
     density = (0.52 + cloud * 0.24 + filaments * 0.08 + fresnel * 0.06) * mix(0.3, 1.0, faceWeight) * bodyPresence;
     density *= 0.58 + energy.z * 0.12 + energy.x * 0.34 + energy.y * 0.25;
+    }
   }
+  // Periodic UV window isolates the actual selected patch on ALL existing veils.
+  // A zero amount is exactly the unchanged /aurora-lab and overview shader.
+  float patchDistance = abs(fract(vUv.x - uMacroCenter + 0.5) - 0.5);
+  float segmentMask = 1.0 - smoothstep(uMacroSpan * 0.58, uMacroSpan, patchDistance);
   float alpha = ends * edges * uOpacity * uVisibility * density * loopPresence;
+  // Diffuse veils do not receive the body's macro contrast amplification.
+  alpha *= mix(1.0, segmentMask * mix(1.35, 1.0, uMist * uPolish), uMacroAmount);
+  // Macro viewing reveals the same colored surface without adding white emission.
+  color *= mix(1.0, mix(1.18, 1.0, uMist * uPolish), uMacroAmount);
   if (alpha < 0.001) discard;
   alpha *= smoothstep(0.001, 0.007, alpha);
   gl_FragColor = vec4(color, alpha);

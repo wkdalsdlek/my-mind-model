@@ -262,7 +262,7 @@ test("quality and flow switches retain slot IDs and meaning; hidden loops retain
   assert.ok(low.ribbons.filter(r => r.kind === "loop").every(r => !r.active));
   assert.ok(high.ribbons.every(r => r.active));
 });
-test("shared visual helper preserves Phase 4 formula, and the renderer consumes it without interaction changes", () => {
+test("shared visual helper preserves Phase 4 formula while render identities remain available", () => {
   const p = engine(broad()), colors = auroraPaletteColors(p.appearance.palette);
   for (const shape of [...auroraRibbonShapes(p.appearance), ...auroraLoopShapes(p.appearance)]) for (const mist of [false, true]) {
     const v = visual(p.appearance.palette, shape, mist), a = shape.colorIndex, b = (a + 1) % colors.length;
@@ -273,7 +273,8 @@ test("shared visual helper preserves Phase 4 formula, and the renderer consumes 
   }
   const source = readFileSync(new URL("../components/aurora/AuroraRibbons.tsx", import.meta.url), "utf8");
   assert.ok(source.includes("auroraRibbonVisualParameters(appearance.palette, shape, mist)"));
-  assert.equal(/onClick|onPointer|userData/.test(source), false);
+  assert.equal(/onClick|onPointer/.test(source), false); // Selection uses a shader-matched native canvas pass.
+  assert.ok(source.includes("userData={identity}"));
 });
 test("completed-result adapter reuses snapshot-bound whole-question analysis verbatim, never generates ribbon interpretation", () => {
   let state = createQuestionnaireState();

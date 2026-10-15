@@ -8,15 +8,24 @@ import { advanceAuroraCamera, AURORA_CAMERA_POLAR_LIMITS, AURORA_CAMERA_TARGET, 
   createAuroraCameraState, interruptAuroraAutoOrbit, readAuroraCameraOrbit, requestAuroraCameraMode, resolveAuroraCameraMode,
   writeAuroraCameraPosition, type AuroraCameraOptions } from "@/lib/aurora-camera";
 import type { AuroraCameraMode, AuroraRibbonCount } from "@/lib/aurora-types";
+import type { AuroraRibbonId } from "@/lib/aurora-ribbon-layout";
+import type { AuroraRibbonInteraction } from "@/lib/aurora-ribbon-picking";
+import { AuroraRibbonFocusCamera } from "@/lib/aurora-ribbon-focus-camera";
+import type { AuroraRibbonFocusPhase } from "@/lib/aurora-ribbon-focus";
 
 export interface AuroraCameraControllerProps {
   mode: AuroraCameraMode; revision: number; reducedMotion: boolean; visible: boolean;
   options?: AuroraCameraOptions;
   ribbonCount: AuroraRibbonCount;
   onModeChange?: (mode: AuroraCameraMode, reason: "interaction" | "reduced-motion") => void;
+  selectedRibbonId?: AuroraRibbonId | null;
+  interaction?: AuroraRibbonInteraction | null;
+  onFocusPhaseChange?: (phase: AuroraRibbonFocusPhase) => void;
+  onFocusReturn?: (mode: AuroraCameraMode) => void;
 }
 /** Sole camera owner: manual OrbitControls OR spherical return/auto, never two frame drivers. */
-export default function AuroraCameraController({ mode, revision, reducedMotion, visible, options, ribbonCount, onModeChange }: AuroraCameraControllerProps) {
+export default function AuroraCameraController({ mode, revision, reducedMotion, visible, options, ribbonCount, onModeChange,
+  selectedRibbonId = null, interaction, onFocusPhaseChange, onFocusReturn }: AuroraCameraControllerProps) {
   const getRendererState = useThree(state => state.get), size = useThree(state => state.size);
   const invalidate = useThree(state => state.invalidate);
   const framing = useMemo(() => auroraCameraFraming(size.width, size.height, ribbonCount), [size.width, size.height, ribbonCount]);
@@ -24,11 +33,12 @@ export default function AuroraCameraController({ mode, revision, reducedMotion, 
   const controls = useRef<OrbitControls | null>(null), motion = useRef(createAuroraCameraState());
   const position = useRef<[number, number, number]>([0, 0.4, 17]);
   const lifecycle = useRef({ initialized: false, revision: -1, reduced: reducedMotion, interacting: false });
-  const latest = useRef({ reducedMotion, visible, onModeChange });
+  const focus = useRef(new AuroraRibbonFocusCamera()), reportedPhase = useRef<AuroraRibbonFocusPhase>("overview");
+  const latest = useRef({ reducedMotion, visible, onModeChange, onFocusPhaseChange, onFocusReturn });
   useLayoutEffect(() => {
-    latest.current = { reducedMotion, visible, onModeChange };
+    latest.current = { reducedMotion, visible, onModeChange, onFocusPhaseChange, onFocusReturn };
     if (!visible) motion.current.velocity = 0;
-  }, [reducedMotion, visible, onModeChange]);
+  }, [reducedMotion, visible, onModeChange, onFocusPhaseChange, onFocusReturn]);
   const readPosition = useCallback(() => {
     getRendererState().camera.position.toArray(position.current);
     readAuroraCameraOrbit(position.current, motion.current.orbit);
@@ -58,6 +68,10 @@ export default function AuroraCameraController({ mode, revision, reducedMotion, 
   useLayoutEffect(() => {
     const { camera, gl } = getRendererState();
     const owner = lifecycle.current, state = motion.current;
+    if (owner.initialized && (selectedRibbonId || focus.current.engaged)) {
+      if (camera instanceof PerspectiveCamera) { camera.aspect = size.width / Math.max(1, size.height); camera.updateProjectionMatrix(); }
+      invalidate(); return;
+    }
     // Explicit requests clear old inertia; an auto-to-manual pointer event keeps its active controls.
     const fresh = !controls.current || owner.revision !== revision || (owner.reduced !== reducedMotion && !owner.interacting);
     if (fresh) installControls();
@@ -87,12 +101,35 @@ export default function AuroraCameraController({ mode, revision, reducedMotion, 
     }
     if (mode !== effective) onModeChange?.(effective, "reduced-motion");
     invalidate();
-  }, [mode, revision, reducedMotion, framing, getRendererState, size.width, size.height, readPosition, installControls, invalidate, onModeChange]);
+  }, [mode, revision, reducedMotion, framing, getRendererState, size.width, size.height, readPosition, installControls, invalidate, onModeChange, selectedRibbonId]);
   useFrame((_, delta) => {
     const camera = getRendererState().camera;
     const orbit = controls.current, state = motion.current;
     if (!orbit || !visible) return;
     const dt = Math.min(Math.max(delta, 0), 0.25);
+    if (interaction && camera instanceof PerspectiveCamera && focus.current.update(camera, orbit.target, interaction, selectedRibbonId, state.mode, framing, delta, reducedMotion)) {
+      orbit.enabled = false; orbit.enableZoom = false; lifecycle.current.interacting = false;
+      getRendererState().gl.domElement.style.touchAction = "pan-y";
+      if (Math.abs(camera.fov - framing.fov) > 0.001) {
+        camera.fov = reducedMotion ? framing.fov : MathUtils.damp(camera.fov, framing.fov, 4, dt); camera.updateProjectionMatrix();
+      }
+      if (focus.current.phase !== reportedPhase.current) {
+        reportedPhase.current = focus.current.phase; latest.current.onFocusPhaseChange?.(focus.current.phase);
+      }
+      if (focus.current.restoredMode) {
+        const restored = focus.current.restoredMode;
+        installControls(); readPosition(); requestAuroraCameraMode(state, restored, reducedMotion); state.returning = false;
+        const restoredOrbit = controls.current!;
+        restoredOrbit.enabled = restored !== "front"; restoredOrbit.enableZoom = restoredOrbit.enabled;
+        restoredOrbit.enableDamping = restored === "free" && !reducedMotion;
+        restoredOrbit.minDistance = framing.minDistance; restoredOrbit.maxDistance = Math.max(framing.maxDistance, state.orbit.radius);
+        lifecycle.current.reduced = reducedMotion; lifecycle.current.revision = revision;
+        getRendererState().gl.domElement.style.touchAction = restoredOrbit.enabled ? "none" : "auto";
+        latest.current.onFocusReturn?.(restored);
+      }
+      if (!reducedMotion || focus.current.phase !== "focused") invalidate();
+      return;
+    }
     if (state.mode === "free") {
       orbit.dampingFactor = 1 - Math.exp(-dt * 4);
       orbit.update(); readPosition();
@@ -106,6 +143,6 @@ export default function AuroraCameraController({ mode, revision, reducedMotion, 
       invalidate();
     }
     if (state.returning) invalidate();
-  }, -2);
+  }, -0.5);
   return null;
 }

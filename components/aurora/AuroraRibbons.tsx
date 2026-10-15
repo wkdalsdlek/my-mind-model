@@ -9,14 +9,20 @@ import { advanceAuroraMotionClock, AURORA_MOTION_WEIGHTS, auroraFlowBudget, crea
 import { auroraCurtainMistShape, auroraLoopMistShape, auroraLoopShapes, auroraRibbonShapes, createAuroraRibbonData, updateAuroraFieldPose, updateAuroraRibbonPose,
   type AuroraRibbonPose, type AuroraRibbonShape } from "@/lib/aurora-geometry";
 import { ribbonFragmentShader, ribbonVertexShader } from "./aurora-shaders";
-import { auroraRibbonVisualParameters } from "@/lib/aurora-ribbon-layout";
+import { auroraRibbonId, auroraRibbonVisualParameters, type AuroraRibbonId } from "@/lib/aurora-ribbon-layout";
+import { auroraRibbonIdentityProfile } from "@/lib/aurora-ribbon-identity";
+import { auroraRibbonFocusOpacity } from "@/lib/aurora-ribbon-focus";
+import { makeAuroraRibbonPickingMaterial, type AuroraRibbonInteraction } from "@/lib/aurora-ribbon-picking";
 import { useAuroraResourceCleanup } from "./useAuroraResourceCleanup";
 
-interface Props { appearance: AuroraAppearance; budget: AuroraQualityBudget; time: RefObject<number>; flowMode: AuroraFlowMode; reducedMotion: boolean }
-interface RibbonProps extends Pick<Props, "appearance" | "time" | "reducedMotion"> {
+interface Props { appearance: AuroraAppearance; budget: AuroraQualityBudget; time: RefObject<number>; flowMode: AuroraFlowMode; reducedMotion: boolean;
+  selectedRibbonId?: AuroraRibbonId | null; interaction?: AuroraRibbonInteraction | null }
+interface RibbonProps extends Pick<Props, "appearance" | "time" | "reducedMotion" | "selectedRibbonId" | "interaction"> {
   shape: AuroraRibbonShape; segments: number; rows: number; active: boolean; clock: RefObject<AuroraMotionClock>; mist?: boolean;
+  ribbonId: AuroraRibbonId; renderKey: string;
 }
-function Ribbon({ shape, appearance, segments, rows, time, active, clock, reducedMotion, mist = false }: RibbonProps) {
+const noResource = { dispose() {} };
+function Ribbon({ shape, appearance, segments, rows, time, active, clock, reducedMotion, mist = false, ribbonId, renderKey, selectedRibbonId = null, interaction }: RibbonProps) {
   const material = useRef<ShaderMaterial>(null), mesh = useRef<Mesh>(null);
   const pose = useRef<AuroraRibbonPose>({ position: [0, 0, 0], rotation: [0, 0, 0] });
   const visibility = useRef(0), initialized = useRef(false);
@@ -33,16 +39,26 @@ function Ribbon({ shape, appearance, segments, rows, time, active, clock, reduce
   useAuroraResourceCleanup(geometry);
   const colors = useMemo(() => {
     const visual = auroraRibbonVisualParameters(appearance.palette, shape, mist);
-    return { a: new Color(visual.colorA.color), b: new Color(visual.colorB.color), opacity: visual.targetOpacity, mix: visual.baseMix };
+    return { a: new Color(visual.colorA.color), b: new Color(visual.colorB.color), opacity: visual.targetOpacity, mix: visual.baseMix, profile: auroraRibbonIdentityProfile(shape, visual) };
   }, [appearance.palette, shape, mist]);
   // Owned uniform storage survives presets so colors and amplitude ease in place.
   const uniforms = useMemo(() => ({
     uTime: { value: 8.3 }, uWaveTime: { value: 0 }, uFieldPhase: { value: 0 }, uAmplitude: { value: 0 }, uPhase: { value: 0 },
     uFrequency: { value: 0 }, uColorA: { value: new Color() }, uColorB: { value: new Color() }, uOpacity: { value: 0 },
     uFlow: { value: 0 }, uMix: { value: 0 }, uIntensity: { value: 1 }, uClosed: { value: 0 }, uLoop: { value: 0 }, uMist: { value: 0 }, uVisibility: { value: 0 }, uSurfaceWeight: { value: AURORA_MOTION_WEIGHTS.surface },
+    uMacroCenter: { value: .2 }, uMacroSpan: { value: .105 }, uMacroAmount: { value: 0 },
+    uPolish: { value: 0 }, uGlassProfile: { value: new Vector4() }, uColorProfile: { value: new Vector2() }, uMistProfile: { value: new Vector2() },
     uEnergyTime: { value: 0 }, uEnergyTiming: { value: energy.map(() => new Vector4()) },
     uEnergyShape: { value: energy.map(() => new Vector4()) }, uEnergyWake: { value: energy.map(() => new Vector2()) },
   }), [energy]);
+  const picking = useMemo(() => interaction && !mist ? makeAuroraRibbonPickingMaterial(uniforms, ribbonId, ribbonVertexShader, ribbonFragmentShader) : null,
+    [interaction, mist, uniforms, ribbonId]);
+  useAuroraResourceCleanup(picking ?? noResource);
+  useLayoutEffect(() => {
+    if (interaction && picking && mesh.current && material.current) return interaction.register(ribbonId,
+      { mesh: mesh.current, shape, active, picking, visual: material.current });
+  }, [interaction, picking, ribbonId, shape, active]);
+  const identity = useMemo(() => ({ ribbonId, renderKey, kind: shape.kind, mist, active }), [ribbonId, renderKey, shape.kind, mist, active]);
   useFrame(() => {
     const state = clock.current;
     const response = reducedMotion || !initialized.current ? 1 : 1 - Math.exp(-state.delta * 4);
@@ -61,11 +77,18 @@ function Ribbon({ shape, appearance, segments, rows, time, active, clock, reduce
           u.uEnergyWake.value[lane].set(event.wakeLength, event.wakeGain);
         }
       }
+      u.uPolish.value = Number(!!interaction);
+      const surface = colors.profile.surface;
+      u.uGlassProfile.value.set(surface.veinWidth, surface.coreFloor, surface.rim, surface.colorSpread);
+      u.uColorProfile.value.set(colors.profile.colors.coreMix, colors.mix);
+      u.uMistProfile.value.set(surface.mistOverview, surface.mistMacro);
       u.uMist.value = Number(mist);
+      u.uMacroCenter.value = interaction?.segmentU.get(ribbonId) ?? .2;
+      u.uMacroAmount.value = MathUtils.lerp(u.uMacroAmount.value, Number(selectedRibbonId === ribbonId), response);
       u.uFlow.value = state.motion.flow;
       u.uColorA.value.lerp(colors.a, response); u.uColorB.value.lerp(colors.b, response);
       u.uMix.value = MathUtils.lerp(u.uMix.value, colors.mix, response);
-      u.uOpacity.value = MathUtils.lerp(u.uOpacity.value, colors.opacity, response);
+      u.uOpacity.value = MathUtils.lerp(u.uOpacity.value, colors.opacity * (selectedRibbonId && selectedRibbonId !== ribbonId ? .018 : auroraRibbonFocusOpacity(selectedRibbonId, ribbonId)), response);
       u.uVisibility.value = visibility.current;
     }
     if (mesh.current) {
@@ -75,14 +98,14 @@ function Ribbon({ shape, appearance, segments, rows, time, active, clock, reduce
       mesh.current.visible = visibility.current > 0.002;
     }
     initialized.current = true;
-  });
-  return <mesh ref={mesh} renderOrder={20} frustumCulled={false}>
+  }, -0.75);
+  return <mesh ref={mesh} userData={identity} name={renderKey} renderOrder={20} frustumCulled={false}>
     <primitive attach="geometry" object={geometry} />
     <shaderMaterial ref={material} vertexShader={ribbonVertexShader} fragmentShader={ribbonFragmentShader}
       uniforms={uniforms} side={DoubleSide} transparent depthWrite={false} blending={NormalBlending} forceSinglePass />
   </mesh>;
 }
-export default function AuroraRibbons({ appearance, budget, time, flowMode, reducedMotion }: Props) {
+export default function AuroraRibbons({ appearance, budget, time, flowMode, reducedMotion, selectedRibbonId, interaction }: Props) {
   const shapes = useMemo(() => auroraRibbonShapes(appearance), [appearance]);
   const loops = useMemo(() => auroraLoopShapes(appearance), [appearance]);
   const loopBudget = useMemo(() => auroraFlowBudget(flowMode, budget), [flowMode, budget]);
@@ -97,11 +120,11 @@ export default function AuroraRibbons({ appearance, budget, time, flowMode, redu
       field.current.position.set(...pose.current.position); field.current.rotation.set(...pose.current.rotation);
     }
   }, -1);
-  const shared = { appearance, time, reducedMotion, clock };
+  const shared = { appearance, time, reducedMotion, clock, selectedRibbonId, interaction };
   return <group ref={field}>
-    {shapes.map((shape, i) => <Ribbon key={`curtain-${i}`} {...shared} shape={shape} segments={budget.segments} rows={budget.rows} active />)}
-    {curtainMistShapes.map((shape, i) => <Ribbon key={`curtain-mist-${i}`} {...shared} shape={shape} segments={loopBudget.curtainMistSegments} rows={loopBudget.curtainMistRows} active mist />)}
-    {loops.map((shape, i) => <Ribbon key={`loop-${i}`} {...shared} shape={shape} segments={loopBudget.segments} rows={loopBudget.rows} active={i < loopBudget.loopCount} />)}
-    {mistShapes.map((layers, i) => layers.map((shape, layer) => <Ribbon key={`mist-${i}-${layer}`} {...shared} shape={shape} segments={loopBudget.mistSegments} rows={loopBudget.mistRows} active={i < loopBudget.loopCount} mist />))}
+    {shapes.map((shape, i) => <Ribbon key={`curtain-${i}`} ribbonId={auroraRibbonId("curtain", i)} renderKey={`curtain-${i}`} {...shared} shape={shape} segments={budget.segments} rows={budget.rows} active />)}
+    {curtainMistShapes.map((shape, i) => <Ribbon key={`curtain-mist-${i}`} ribbonId={auroraRibbonId("curtain", i)} renderKey={`curtain-mist-${i}`} {...shared} shape={shape} segments={loopBudget.curtainMistSegments} rows={loopBudget.curtainMistRows} active mist />)}
+    {loops.map((shape, i) => <Ribbon key={`loop-${i}`} ribbonId={auroraRibbonId("loop", i)} renderKey={`loop-${i}`} {...shared} shape={shape} segments={loopBudget.segments} rows={loopBudget.rows} active={i < loopBudget.loopCount} />)}
+    {mistShapes.map((layers, i) => layers.map((shape, layer) => <Ribbon key={`mist-${i}-${layer}`} ribbonId={auroraRibbonId("loop", i)} renderKey={`mist-${i}-${layer}`} {...shared} shape={shape} segments={loopBudget.mistSegments} rows={loopBudget.mistRows} active={i < loopBudget.loopCount} mist />))}
   </group>;
 }

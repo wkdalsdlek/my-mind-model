@@ -1,5 +1,7 @@
 # Phase 5-C-3B — 실제 Next.js 통합 검증
 
+Phase 6-A 이후 인증된 통합 실행 방법은 [보안 검증 문서](private-beta-security-verification.md)를 사용한다. 아래 상수 로그인·비인증 API 결과는 Phase 5 당시의 기록이다.
+
 기준 브랜치 `feat/glass-nebula-aurora`, HEAD `297333184d1b72798cb7ba52b3cb37a03aef6b61`.
 실제 사용자 데이터 대신 합성 답변을 사용한다. 유료 OpenAI 호출·커밋·푸시·배포는 하지 않는다.
 

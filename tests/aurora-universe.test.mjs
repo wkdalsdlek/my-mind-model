@@ -142,7 +142,7 @@ test('quality helper refuses a mismatch rather than guessing by a similar color'
   const r=await universeFixture();r.context.facts.ribbons[0].ribbonId='aurora-ribbon-v1:curtain:99';assert.equal(universeRibbonLayout(r,'high'),null);
 });
 test('normal page generation imports the new controller and never calls the legacy controller',()=>{
-  const page=readFileSync(new URL('../app/page.tsx',import.meta.url),'utf8');
+  const page=readFileSync(new URL('../components/MindJourney.tsx',import.meta.url),'utf8');
   assert.ok(page.includes('AuroraUniverseRequestController'));assert.ok(!page.includes('AuroraAnalysisRequestController'));assert.ok(!page.includes('/api/analyze'));
   assert.ok(page.includes('approval.text === snapshot.personalization.approvedTitle.text'));
 });

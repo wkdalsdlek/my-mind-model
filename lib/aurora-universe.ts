@@ -10,12 +10,15 @@ export type AuroraUniverseResult = { version: "aurora-universe-v1"; snapshot: Au
   { status: "interpreted"; interpretation: AuroraInterpretationResult } |
   { status: "quote-unavailable"; interpretation: null });
 export type AuroraUniverseFailure = "AI_NOT_CONFIGURED" | "INVALID_INPUT" | "APPROVAL_MISMATCH" | "REQUEST_TOO_LARGE"
+  | "AUTH_REQUIRED" | "ACCESS_DENIED" | "USAGE_LIMITED" | "SECURITY_UNAVAILABLE"
   | "INTERPRETATION_FAILED" | "INTERPRETATION_RESPONSE_INVALID" | "CONNECTION_FAILED" | "REQUEST_TIMEOUT" | "RESULT_TRANSITION_FAILED";
 export type AuroraUniversePhase = "preparing" | "requesting" | "validating";
 const failures: readonly AuroraUniverseFailure[] = ["AI_NOT_CONFIGURED", "INVALID_INPUT", "APPROVAL_MISMATCH", "REQUEST_TOO_LARGE", "INTERPRETATION_FAILED",
-  "INTERPRETATION_RESPONSE_INVALID", "CONNECTION_FAILED", "REQUEST_TIMEOUT", "RESULT_TRANSITION_FAILED"];
+  "INTERPRETATION_RESPONSE_INVALID", "CONNECTION_FAILED", "REQUEST_TIMEOUT", "RESULT_TRANSITION_FAILED", "AUTH_REQUIRED", "ACCESS_DENIED", "USAGE_LIMITED", "SECURITY_UNAVAILABLE"];
 export function auroraUniverseFailureMessage(code: AuroraUniverseFailure): string {
   const messages: Record<AuroraUniverseFailure, string> = {
+    AUTH_REQUIRED: "세션이 만료되었어요. 다시 로그인해 주세요.", ACCESS_DENIED: "계정 권한 또는 요청 출처를 확인해 주세요.",
+    USAGE_LIMITED: "사용 한도에 도달했거나 생성이 진행 중이에요. 잠시 후 다시 시도해 주세요.", SECURITY_UNAVAILABLE: "보안 또는 예산 설정을 확인하지 못했어요. 관리자에게 문의해 주세요.",
     AI_NOT_CONFIGURED: "해석 서비스가 아직 설정되지 않았어요. 관리자에게 설정을 확인해 주세요.",
     INVALID_INPUT: "해석에 사용할 답변 상태를 확인하지 못했어요.", APPROVAL_MISMATCH: "지금 답변과 마지막 문장의 승인 상태를 다시 확인해 주세요.",
     REQUEST_TOO_LARGE: "해석할 표현이 너무 길어요. 입력을 조금 줄인 뒤 다시 승인해 주세요.",
@@ -98,7 +101,7 @@ export class AuroraUniverseRequestController {
         if (response.status === 422 && code === "QUOTE_CANDIDATES_INSUFFICIENT") {
           result = { version: "aurora-universe-v1", snapshot: prepared.snapshot, context, status: "quote-unavailable", interpretation: null };
         } else {
-          callbacks.failure(response.status === 408 ? "REQUEST_TIMEOUT" : typeof code === "string" && failures.includes(code as AuroraUniverseFailure)
+          callbacks.failure(response.status === 401 ? "AUTH_REQUIRED" : response.status === 403 ? "ACCESS_DENIED" : response.status === 429 ? "USAGE_LIMITED" : response.status === 503 && code !== "AI_NOT_CONFIGURED" ? "SECURITY_UNAVAILABLE" : response.status === 408 ? "REQUEST_TIMEOUT" : typeof code === "string" && failures.includes(code as AuroraUniverseFailure)
             ? code as AuroraUniverseFailure : "INTERPRETATION_FAILED"); return;
         }
       } else result = { version: "aurora-universe-v1", snapshot: prepared.snapshot, context, status: "interpreted", interpretation: validateAuroraInterpretationResponse(body, context) };

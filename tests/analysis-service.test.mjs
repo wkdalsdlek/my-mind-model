@@ -201,7 +201,7 @@ test("actual route SDK configuration uses strict schema, bounded output and no h
     process.env.OPENAI_API_KEY = "unit-test-only";
     process.env.NODE_ENV = "development";
     console.info = (...args) => diagnostics.push(args[1]);
-    const loader = createModuleLoader({ openai: MockOpenAI });
+    const loader = createModuleLoader({ openai: MockOpenAI, "../../../lib/server/security/api": { protectAI: (_feature, handler) => req => handler(req, { run: (_params, call) => call() }) } });
     const route = loader("app/api/analyze/route.ts");
     const response = await route.POST(request());
     assert.equal(response.status, 200);
@@ -306,7 +306,7 @@ test("actual route keeps the requested model, reasoning and shared token budget 
   try {
     process.env.OPENAI_API_KEY = "unit-test-only";
     process.env.NODE_ENV = "production";
-    const route = createModuleLoader({ openai: MockOpenAI })("app/api/analyze/route.ts");
+    const route = createModuleLoader({ openai: MockOpenAI, "../../../lib/server/security/api": { protectAI: (_feature, handler) => req => handler(req, { run: (_params, call) => call() }) } })("app/api/analyze/route.ts");
     const response = await route.POST(request());
     assert.equal(response.status, 200);
     assert.equal((await response.json()).comments.length, 10);

@@ -1,5 +1,7 @@
 # Phase 5-C-3B — Philosophical Universe
 
+Phase 6-A 이후 인증된 통합 실행 방법은 [보안 검증 문서](private-beta-security-verification.md)를 사용한다. 아래 상수 로그인·비인증 API 결과는 Phase 5 당시의 기록이다.
+
 실제 Next.js 후속 통합 검증과 인증 위험은 [별도 기록](aurora-next-integration-verification.md)을 참고한다. 아래의 별도 번들 검증은 당시 수행 범위의 기록으로 유지한다.
 
 기준: `feat/glass-nebula-aurora`, `297333184d1b72798cb7ba52b3cb37a03aef6b61`.

@@ -40,6 +40,7 @@ export function createClosingRequestLimiter(now: () => number = Date.now) {
   };
 }
 interface ClosingServiceDependencies {
+  sourceValidated?: boolean; // Only set behind the durable authenticated route boundary.
   apiKey: () => string | undefined;
   complete: (options: { apiKey: string; input: ClosingMessageInput; previousText?: string; signal: AbortSignal }) => Promise<string | null>;
   reserve: ReturnType<typeof createClosingRequestLimiter>;
@@ -111,7 +112,7 @@ function allowedRequestSource(req: Request): boolean {
 
 export function createClosingMessageHandler(deps: ClosingServiceDependencies) {
   return async (req: Request): Promise<Response> => {
-    if (!allowedRequestSource(req)) return fail("REQUEST_FORBIDDEN", 403);
+    if (!deps.sourceValidated && !allowedRequestSource(req)) return fail("REQUEST_FORBIDDEN", 403);
     if (req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("INVALID_INPUT", 415);
     let body: Record<string, unknown>, input: ClosingMessageInput;
     try {

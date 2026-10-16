@@ -6,14 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "beta:admin": "tsx scripts/private-beta.ts",
+    "test:security": "tsx --test tests/private-beta.test.mts",
+    "test:security:next": "tsx tests/helpers/verify-private-beta.mts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",
-    "next": "16.1.6",
+    "better-auth": "1.7.10",
+    "next": "16.4.2",
     "openai": "^6.25.0",
+    "pg": "8.23.1",
     "postprocessing": "^6.38.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -22,11 +27,14 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.4.2",
+    "playwright": "^1.64.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   },
   "allowScripts": {

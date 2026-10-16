@@ -250,7 +250,7 @@ test('new route adapter keeps model, medium, timeout, strict schema and SDK retr
   let options,config,calls=0;
   class MockOpenAI{constructor(value){config=value;this.chat={completions:{create:async(request)=>{options=request;calls++;const c=await context();const b=completion(c);return {choices:[{finish_reason:'stop',message:{content:b.content}}],usage:{prompt_tokens:100,completion_tokens:200,total_tokens:300}};}}};}}
   const old=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='mock-only';
-  try{const routeAdapter=createModuleLoader({openai:MockOpenAI})('app/api/aurora-interpretation/route.ts');assert.equal((await routeAdapter.POST(request())).status,200);
+  try{const routeAdapter=createModuleLoader({openai:MockOpenAI,"../../../lib/server/security/api":{protectAI:(_feature,handler)=>req=>handler(req,{run:(_params,call)=>call()})}})('app/api/aurora-interpretation/route.ts');assert.equal((await routeAdapter.POST(request())).status,200);
     assert.equal(calls,1);assert.equal(config.maxRetries,0);assert.equal(config.logLevel,'off');assert.equal(config.timeout,45000);
     assert.equal(options.model,'gpt-6.1-sol');assert.equal(options.reasoning_effort,'medium');assert.equal(options.max_completion_tokens,25000);assert.equal(options.response_format.json_schema.strict,true);
     for(const key of ['temperature','top_p','logprobs','max_tokens'])assert.ok(!(key in options));

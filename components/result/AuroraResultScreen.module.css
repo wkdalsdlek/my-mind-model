@@ -14,8 +14,8 @@
 .focusBar p { color: #d4e3f2; font-size: 12px; line-height: 1.7; margin: 0; }
 .focusBar span { color: #9dafcf; font-size: 11px; }
 .focusBar button { pointer-events: auto; min-height: 44px; border: 1px solid #a4dfe566; border-radius: 24px; background: #101b30aa; color: #d5eff1; padding: 10px 17px; cursor: pointer; font-size: 12px; }
-.ribbonList { position: fixed; z-index: 3; bottom: 103px; left: 20px; right: 20px; display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; pointer-events: none; }
-.ribbonList button { display: flex; align-items: center; gap: 7px; max-width: 100%; min-height: 44px; border: 1px solid transparent; border-radius: 24px; background: #080d2366; color: #bac9e2; padding: 8px 11px; font-size: 11px; cursor: pointer; pointer-events: auto; }
+.ribbonList { position: fixed; z-index: 3; bottom: 103px; left: 20px; right: 20px; display: flex; justify-content: flex-start; gap: 5px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; pointer-events: none; }
+.ribbonList button { display: flex; align-items: center; flex-shrink: 0; gap: 7px; max-width: 100%; min-height: 44px; border: 1px solid transparent; border-radius: 24px; background: #080d2366; color: #bac9e2; padding: 8px 11px; font-size: 11px; cursor: pointer; pointer-events: auto; }
 .ribbonList button[aria-pressed="true"] { border-color: #a4dfe5aa; color: #e4f3f5; background: #14243c99; }
 .ribbonList button > span:last-child { color: #9bacc8; font-size: 9px; }
 .ribbonSwatch { flex-shrink: 0; width: 18px; height: 7px; border-radius: 8px; }
@@ -27,7 +27,7 @@
 .motion input { accent-color: #9ee1e5; width: 18px; height: 18px; }
 .cameraHint { position: fixed; z-index: 2; bottom: 12px; left: 20px; right: 20px; text-align: center; pointer-events: none; color: #97a9c9; font-size: 10px; line-height: 1.6; }
 .actions { position: fixed; z-index: 3; bottom: 53px; left: 24px; right: 140px; display: flex; justify-content: center; gap: 10px; pointer-events: none; }
-.actions::before { content: ''; position: fixed; inset: auto 0 0; height: 195px; background: linear-gradient(transparent, #080d23ba 65%, #080d23e6); z-index: -1; pointer-events: none; }
+.result:not(.immersed)::after { content: ''; position: fixed; inset: auto 0 0; height: 195px; background: linear-gradient(transparent, #080d23ba 65%, #080d23e6); z-index: 1; pointer-events: none; }
 .actions button, .analysisHeader button { border: 0; background: transparent; color: #aebfd9; padding: 10px 13px; min-height: 44px; font-size: 12px; cursor: pointer; pointer-events: auto; }
 .result button:disabled, .result select:disabled { opacity: .5; cursor: default; }
 .result :is(button, select, input, summary):focus-visible { outline: 2px solid #b1e6e9; outline-offset: 4px; }
@@ -73,8 +73,8 @@
   .header { width: 100%; padding: 22px 22px 10px; }
   .header h1 { font-size: clamp(21px, 5vw, 30px); }
   .brand > span:last-child { display: none; }
-  .ribbonList { bottom: 115px; gap: 3px; left: 10px; right: 10px; }
-  .ribbonList button { padding: 7px 9px; font-size: 10px; }
+  .ribbonList { bottom: 115px; gap: 3px; left: 10px; right: 10px; flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; scrollbar-width: thin; }
+  .ribbonList button { padding: 7px 9px; font-size: 10px; flex-shrink: 0; }
   .ribbonList button > span:last-child { display: none; }
   .focusBar { bottom: 220px; }
   .settings { right: 12px; bottom: 59px; }
@@ -111,3 +111,50 @@
 /* Empty HTML overlay space must pass mouse/touch through to the SAME Canvas. */
 .result { pointer-events: none; }
 .stage, .result :is(button, select, input, summary), .settings, .ribbonMeaning, .analysis { pointer-events: auto; }
+
+@font-face { font-family: "Aurora Pen"; src: url("/fonts/nanum-pen-script/NanumPenScript-Regular.ttf") format("truetype"); font-display: swap; font-style: normal; font-weight: 400; }
+.header { width: min(850px, 96%); padding-top: max(18px, env(safe-area-inset-top)); }
+.header .eyebrow { display: none; }
+.header .brand, .header .subtitle { display: none; }
+.result[data-reading="true"] .header, .withAnalysis :is(.focusBar, .ribbonList, .settings, .cameraHint, .actions) { visibility: hidden; }
+.header h1 { font-size: clamp(23px, 2.6vw, 34px); line-height: 1.35; margin: 9px auto; max-height: 10svh; }
+.brand { margin: 0; }
+.philosophy { margin: 0 auto; max-width: 710px; }
+.quote { font-family: "Aurora Pen", "Apple Chancery", Georgia, "Noto Serif KR", serif; font-size: clamp(27px, 3.6vw, 36px); font-weight: 400; line-height: 1.2; letter-spacing: .01em; color: #e5edf7; margin: 8px 0; text-wrap: balance; word-break: keep-all; overflow-wrap: anywhere; text-shadow: 0 0 22px #bccbe52e, 0 2px 12px #080d23; }
+.philosophy figcaption { display: flex; gap: 14px; justify-content: center; align-items: baseline; flex-wrap: wrap; color: #c4d3e8; font-size: 12px; line-height: 1.5; }
+.quoteReason { color: #b9c9e0; font-size: 12px; line-height: 1.75; margin: 8px auto 0; max-width: 620px; max-height: 3.5em; overflow-y: auto; pointer-events: auto; text-wrap: pretty; }
+.quoteReason:focus-visible { outline: 2px solid #b1e6e9; outline-offset: 4px; }
+.quoteSource { position: relative; pointer-events: auto; }
+.quoteSource summary { min-height: 32px; cursor: pointer; color: #a7ceda; font-size: 11px; }
+.quoteSource > div { position: absolute; z-index: 10; width: min(330px, 86vw); top: 28px; left: 50%; transform: translateX(-50%); padding: 18px; border-radius: 16px; background: #0e182ef5; box-shadow: 0 12px 40px #0007; text-align: left; max-height: 40svh; overflow: auto; color: #c0cfe4; line-height: 1.85; }
+.quoteSource a { color: #c0e7ec; text-decoration: underline; text-underline-offset: 4px; }
+.quoteSource p { margin: 10px 0 0; }
+.originalQuote { font-family: Georgia, serif; font-style: italic; }
+.subtitle { font-size: 11px; margin: 8px 0 0; }
+.immersed .philosophy, .immersed .quoteFallback { display: none; }
+.quoteFallback { margin: 0 auto; max-width: 650px; color: #bdcde3; font-size: 12px; line-height: 1.8; }
+.fallbackLabel { font-size: 10px; color: #a3c5d4; margin: 10px 0 0; }
+.ownSentence { font-size: 18px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 10svh; overflow: auto; pointer-events: auto; margin: 5px 0; }
+.quoteFallback button { min-height: 44px; padding: 8px 12px; background: #0d1930aa; color: #d4e6ee; border: 1px solid #a7c3e333; border-radius: 22px; margin: 0 4px; cursor: pointer; }
+.interpretationText { font-size: 14px; line-height: 1.95; color: #d0dced; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reflection { margin-top: 30px; padding-bottom: 16px; color: #d0e6ec; }
+.reflection p { font-family: "Aurora Pen", Georgia, serif; font-size: 25px; line-height: 1.5; }
+.ribbonMeaning h3 { font-size: 14px; color: #d1e5ee; }
+.scopeNote { font-size: 12px; line-height: 1.9; color: #b0c1da; }
+.analysis { top: 7svh; bottom: 160px; width: min(540px, 47%); border: 0; background: linear-gradient(90deg, #080d2380, #080d23e8 20%); padding-top: 28px; }
+.readingIntro { color: #aebfd7; font-size: 12px; line-height: 1.9; }
+.overallText { color: #dbe5f4; font-size: 15px; line-height: 2.1; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approvedReference { margin-top: 32px; color: #bbd1df; font-size: 13px; line-height: 1.9; }
+.approvedReference h3 { color: #9cbdcf; font-size: 11px; font-weight: 400; }
+.approvedReference p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-aspect-ratio: 6/5) {
+  .header { padding: max(18px, env(safe-area-inset-top)) 19px 10px; }
+  .header h1 { font-size: clamp(22px, 5vw, 28px); margin: 10px auto; }
+  .quote { font-size: clamp(27px, 6.7vw, 33px); line-height: 1.25; }
+  .quoteReason { font-size: 12px; line-height: 1.65; }
+  .quoteSource > div { left: auto; right: -14px; transform: none; }
+  .philosophy figcaption { gap: 6px 14px; font-size: 12px; }
+  .subtitle { font-size: 10px; }
+  .analysis { top: 24svh; bottom: 115px; width: 100%; padding: 25px 24px 40px; background: linear-gradient(#080d23e3, #080d23f5); }
+  .analysisHeader h2 { font-size: 20px; }
+}

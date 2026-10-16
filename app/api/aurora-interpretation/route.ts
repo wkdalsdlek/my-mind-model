@@ -4,7 +4,7 @@ import { createAuroraInterpretationHandler, interpretationModelInput, interpreta
 
 export const runtime = "nodejs";
 export const maxDuration = 100;
-/** Additive endpoint, deliberately not called by the existing result UI. */
+/** Primary interpretation endpoint; legacy analyze remains independently available. */
 export const POST = createAuroraInterpretationHandler({
   apiKey: () => process.env.OPENAI_API_KEY,
   complete: async ({ apiKey, context, attempt, signal }) => {

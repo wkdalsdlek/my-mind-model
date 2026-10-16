@@ -7,6 +7,7 @@ import ts from "typescript";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadModule, createModuleLoader } from "./helpers/load-typescript.mjs";
+import { universeFixture } from "./helpers/aurora-universe-fixture.mjs";
 
 const { prepareAuroraResult, readAuroraAnalysisComments, validateAuroraAnalysisResponse, logAuroraAnalysisDiagnostic,
   auroraAnalysisFailureMessage, AuroraAnalysisRequestController } = loadModule("lib/aurora-result.ts");
@@ -292,34 +293,36 @@ const externals = {
   "@/components/aurora/GlassNebulaAurora": props => { rendererProps = props; return React.createElement("div", { "data-aurora-test": true }); },
   "@/components/aurora/useAuroraBrowserSignals": { useAuroraBrowserSignals: () => ({ reduced: false }) },
   "@/lib/question-data": { QUESTION_DATA }, "./AuroraResultScreen.module.css": {},
-  "@/lib/aurora-ribbon-meaning": loadModule("lib/aurora-ribbon-meaning.ts"),
+  "@/lib/aurora-universe": loadModule("lib/aurora-universe.ts"),
+  "@/lib/philosophy-quotes": loadModule("lib/philosophy-quotes.ts"),
 };
 runInThisContext(`(function(require, exports) { ${outputText}\n})`)(id => { assert.ok(Object.hasOwn(externals, id), id); return externals[id]; }, exports);
-function markup(state) { return renderToStaticMarkup(React.createElement(exports.default, { result: { snapshot: snapshot(state), comments: readAuroraAnalysisComments(payload()) }, onReset: () => {} })); }
-test("real result JSX forwards only 5-A appearance and camera/quality props, not legacy or special effect values", () => {
-  const state = approve(choose(complete(), 0, 3)), html = markup(state);
+async function markup(state, fallback = false) { const result = await universeFixture(state); return renderToStaticMarkup(React.createElement(exports.default, { result: fallback ? { ...result, status: "quote-unavailable", interpretation: null } : result, onReset: () => {} })); }
+test("real result JSX forwards only 5-A appearance and camera/quality props, not legacy or special effect values", async () => {
+  const state = approve(choose(complete(), 0, 3)), html = await markup(state);
   assert.deepEqual(rendererProps.appearance, snapshot(state).personalization.appearance);
   assert.equal(rendererProps.quality, "balanced"); assert.equal(rendererProps.cameraMode, "front");
   for (const key of ["title", "colors", "speed", "distort", "atmosphere", "innerPulse", "releaseFragments", "outerExpansion"]) assert.equal(Object.hasOwn(rendererProps, key), false);
-  assert.ok(html.includes(title));
+  assert.ok(html.includes("조용히 이어지는 나의 빛"));
+  assert.equal(snapshot(state).personalization.approvedTitle.text, title);
   assert.equal(html.includes("날씨:"), false); assert.equal(html.includes("레거시"), false);
-  for (const label of ["정면 감상", "자유 탐색", "느린 자동 공전", "정면으로 돌아오기", "다시 성찰하기", "요약 분석", "심층 분석"]) assert.ok(html.includes(label));
+  for (const label of ["정면 감상", "자유 탐색", "느린 자동 공전", "정면으로 돌아오기", "다시 성찰하기", "나의 오로라 읽기"]) assert.ok(html.includes(label));
 });
-test("neutral visual fallback is explained as neutral light without claiming an inferred trait", () => {
-  assert.ok(markup(complete()).includes("중립적인 빛"));
-  const single = markup(approve(choose(complete(), 0, 12)));
+test("neutral visual fallback is explained as neutral light without claiming an inferred trait", async () => {
+  assert.ok((await markup(complete())).includes("중립적인 빛"));
+  const single = await markup(approve(choose(complete(), 0, 12)));
   assert.ok(single.includes("중립적인 보조색"));
 });
-test("multiline and long approved titles are preserved and rendered safely as text", () => {
+test("multiline and long approved titles are preserved and rendered safely as text", async () => {
   const text = "<script>\n" + "내가 직접 남긴 긴 문장".repeat(60);
-  const html = markup(complete(text));
+  const html = await markup(complete(text), true);
   assert.ok(html.includes("&lt;script&gt;\n"));
   assert.ok(html.includes("내가 직접 남긴 긴 문장".repeat(60)));
   assert.equal(html.includes("<script>"), false);
 });
 
-test("immersive result exposes exactly one accessible real-ID beacon per active mapped ribbon",()=>{
-  const state=approve(choose(choose(choose(complete(),0,2),0,3),0,12)),html=markup(state);
+test("immersive result exposes exactly one accessible real-ID beacon per active mapped ribbon",async()=>{
+  const state=approve(choose(choose(choose(complete(),0,2),0,3),0,12)),html=await markup(state);
   const map=loadModule("lib/aurora-ribbon-meaning.ts").buildAuroraRibbonMeaningFromResult({snapshot:snapshot(state),comments:readAuroraAnalysisComments(payload())});
   const ids=Array.from(html.matchAll(/data-beacon-id="([^"]+)"/g),m=>m[1]);
   assert.deepEqual(ids,map.ribbons.filter(r=>r.active).map(r=>r.ribbonId));assert.equal(new Set(ids).size,ids.length);

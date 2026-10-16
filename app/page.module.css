@@ -1,0 +1,4 @@
+.analysisStatus { position: fixed; z-index: 30; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(580px, calc(100% - 28px)); padding: 16px 22px; border-radius: 18px; color: #e2ecf9; background: #101b30f2; box-shadow: 0 12px 50px #0008; text-align: center; }
+.analysisStatus p { font-size: 14px; line-height: 1.8; margin: 0 0 8px; }
+.analysisStatus button { min-height: 44px; padding: 9px 15px; color: #c9edf0; border: 1px solid #a4dfe566; background: transparent; border-radius: 24px; margin: 4px; cursor: pointer; }
+.analysisStatus button:focus-visible { outline: 2px solid #b1e6e9; outline-offset: 3px; }

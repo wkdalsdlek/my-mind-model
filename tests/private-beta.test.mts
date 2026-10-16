@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { hashPassword } from 'better-auth/crypto';
 import { getMigrations } from 'better-auth/db/migration';
-import { securityPool } from '../lib/server/security/database';
+import { securityPool, locked } from '../lib/server/security/database';
 import { getAuth, principal, type Principal } from '../lib/server/security/auth';
 import { authConfig, budgetConfig, checkOrigin, seoulPeriods, cost, SecurityError } from '../lib/server/security/policy';
 import { reserveUsage, requestDigest } from '../lib/server/security/usage';
@@ -183,5 +183,16 @@ suite('deleting an account cannot erase its global budget charge',async()=>{
  await securityPool().query("INSERT INTO ai_request(id,user_id,feature,digest,day,month,state,attempts,reserved_usd,charged_usd,expires_at) VALUES($1,$2,'closing','synthetic',$3,$4,'success',1,10,10,now())",[requestId,id,periods.day,periods.month]);
  await securityPool().query('DELETE FROM "user" WHERE id=$1',[id]);const row=(await securityPool().query('SELECT user_id,charged_usd FROM ai_request WHERE id=$1',[requestId])).rows[0];assert.equal(row.user_id,null);assert.equal(Number(row.charged_usd),10);
  const old=process.env.AI_GLOBAL_MONTH_USD;process.env.AI_GLOBAL_MONTH_USD='10';await assert.rejects(reserveUsage(user,'closing',randomUUID()),(e:unknown)=>e instanceof SecurityError&&e.code==='AI_BUDGET_LIMIT');process.env.AI_GLOBAL_MONTH_USD=old;
+});
+suite('transaction timeout applies locally without leaking session settings',async()=>{
+ const before=(await securityPool().query('SHOW statement_timeout')).rows[0].statement_timeout;
+ await locked(async db=>{assert.equal((await db.query('SHOW statement_timeout')).rows[0].statement_timeout,'10s');});
+ assert.equal((await securityPool().query('SHOW statement_timeout')).rows[0].statement_timeout,before);
+});
+suite('failed locked transaction rolls back writes and releases the guard',async()=>{
+ const before=(await securityPool().query('SELECT "closingDaily" FROM "user" WHERE id=$1',[ids.tester])).rows[0].closingDaily;
+ await assert.rejects(locked(async db=>{await db.query('UPDATE "user" SET "closingDaily"="closingDaily"+1 WHERE id=$1',[ids.tester]);throw new Error('SYNTHETIC_ROLLBACK');}));
+ assert.equal((await securityPool().query('SELECT "closingDaily" FROM "user" WHERE id=$1',[ids.tester])).rows[0].closingDaily,before);
+ await locked(async db=>{assert.equal((await db.query('SELECT id FROM beta_guard')).rowCount,1);});
 });
 suite('DB outage produces 503 and zero provider calls on all routes',async()=>{await securityPool().end();const before=providerCalls;for(const route of [closing,interpretation,analyze])assert.equal((await route(json('/api/x',{},cookies.tester))).status,503);assert.equal(providerCalls,before);});

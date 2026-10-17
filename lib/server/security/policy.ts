@@ -43,6 +43,18 @@ export function budgetConfig(env: NodeJS.ProcessEnv = process.env) {
     globalDayRequests: count(env.AI_GLOBAL_DAY_REQUESTS), globalMonthRequests: count(env.AI_GLOBAL_MONTH_REQUESTS), concurrency: count(env.AI_GLOBAL_CONCURRENCY) };
 }
 export function featureModel(feature: Feature) { return feature === "closing" ? { model: "gpt-4o-mini", output: 180, attempts: 1 } : { model: "gpt-6.1-sol", output: 25000, attempts: 2 }; }
+/** Request-local Preview override. Bytes also remain a conservative token bound
+ * for reservation and reported usage; never mutate the shared price settings. */
+export function featureBudgetConfig(feature: Feature, env: NodeJS.ProcessEnv = process.env): ReturnType<typeof budgetConfig> {
+  const config = budgetConfig(env);
+  if (feature !== "interpretation" || env.VERCEL_ENV !== "preview") return config;
+  const raw = env.AI_INTERPRETATION_MAX_INPUT_BYTES;
+  if (raw === undefined) return config;
+  const limit = Number(raw);
+  if (!Number.isSafeInteger(limit) || String(limit) !== raw || limit < 4096 || limit > 60000) throw new SecurityError("BUDGET_NOT_CONFIGURED");
+  const { model } = featureModel(feature);
+  return { ...config, prices: { ...config.prices, [model]: { ...config.prices[model], maxInputTokens: limit } } };
+}
 export function cost(p: Price, input: number, output: number, cached = 0) {
   return ((input - cached) * p.input + cached * p.cachedInput + output * p.output) / 1000000;
 }

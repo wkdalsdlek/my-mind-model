@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { locked } from "./database";
-import { authConfig, budgetConfig, cost, featureModel, SecurityError, seoulPeriods, type Feature } from "./policy";
+import { authConfig, budgetConfig, featureBudgetConfig, cost, featureModel, SecurityError, seoulPeriods, type Feature } from "./policy";
 import type { Principal } from "./auth";
 import { logModelBudgetMismatch, type ModelBudgetMismatch } from "./model-budget-diagnostics";
 
@@ -11,7 +11,7 @@ function canonical(value: unknown): unknown {
 }
 export function requestDigest(feature: Feature, body: unknown) { return createHmac("sha256", authConfig().secret).update(feature+":"+JSON.stringify(canonical(body))).digest("hex"); }
 export async function reserveUsage(user: Principal, feature: Feature, digest: string) {
-  const config = budgetConfig(), model = featureModel(feature), price = config.prices[model.model];
+  const config = featureBudgetConfig(feature), model = featureModel(feature), price = config.prices[model.model];
   const reserved = Math.ceil(cost(price,price.maxInputTokens,model.output)*model.attempts*1e8)/1e8;
   return locked(async db => {
     const clock = (await db.query('SELECT now() AS time')).rows[0].time as Date;

@@ -4,6 +4,7 @@ import { AuroraInterpretationError, isRecord, prepareAuroraInterpretation } from
 import type { AuroraInterpretationErrorCode } from "../aurora-interpretation";
 import type { AuroraInterpretationContext } from "../aurora-interpretation-types";
 import { philosophyQuoteCandidates } from "../philosophy-quotes";
+import { InterpretationDeadline, INTERPRETATION_TIMING, awaitSignal, type InterpretationAbortSource } from "./interpretation-deadline";
 import { ANALYSIS_MODEL, ANALYSIS_REASONING_EFFORT, ANALYSIS_MAX_COMPLETION_TOKENS, ANALYSIS_MAX_ATTEMPTS,
   estimateAnalysisStandardCostUsd, type AnalysisCompletion, type AnalysisTokenUsage } from "./analysis-service";
 
@@ -11,7 +12,7 @@ export const INTERPRETATION_MODEL = ANALYSIS_MODEL;
 export const INTERPRETATION_REASONING_EFFORT = ANALYSIS_REASONING_EFFORT;
 export const INTERPRETATION_MAX_COMPLETION_TOKENS = ANALYSIS_MAX_COMPLETION_TOKENS;
 export const INTERPRETATION_LIMITS = { bodyBytes: 524288, modelInputCharacters: 100000, modelOutputCharacters: AURORA_INTERPRETATION_OUTPUT_LIMIT,
-  attemptMs: 45000, totalMs: 95000, maxAttempts: ANALYSIS_MAX_ATTEMPTS } as const;
+  ...INTERPRETATION_TIMING, maxAttempts: ANALYSIS_MAX_ATTEMPTS } as const;
 export const INTERPRETATION_SYSTEM_PROMPT = `실제 답변과 결정적 의미 데이터에 근거한 철학적·성찰적 한국어 해석을 작성하세요.
 전체 이름은 30자 안팎, 전체 해석은 5~8문장, 리본의 psychological/philosophical은 각각 1~2문장, reflectionQuestion은 짧은 열린 질문 하나입니다.
 overall은 반복 가치와 공존하는 가치, 맥락, 승인 문장의 연결을 다룹니다. 근거 없는 진단·질환·무의식·본성·미래 성취 단정은 하지 마세요.
@@ -57,24 +58,29 @@ export function interpretationModelInput(context: AuroraInterpretationContext) {
 export interface InterpretationDiagnostic extends AnalysisTokenUsage {
   attempt: 1 | 2; outcome: "success" | "invalid-output" | "generation-failed" | "cancelled";
   finishReason: "stop" | "length" | "content_filter" | "unknown"; expectedRibbons: number; providerStatus?: number;
+  abortSource?: InterpretationAbortSource;
+  elapsedMs?: number; attemptElapsedMs?: number; attemptTimeoutMs?: number; totalTimeoutMs?: number; workTimeoutMs?: number;
 }
 /** Only allowlisted scalars. No hashes, input, output, quotes, SDK errors or keys. */
 export function logInterpretationDiagnostic(value: InterpretationDiagnostic): void {
-  if (process.env.NODE_ENV !== "development" || ![1, 2].includes(value.attempt)
+  if (process.env.VERCEL_ENV !== "preview" || ![1, 2].includes(value.attempt)
     || !["success", "invalid-output", "generation-failed", "cancelled"].includes(value.outcome)
     || !["stop", "length", "content_filter", "unknown"].includes(value.finishReason)) return;
   const safe: Record<string, number | string> = { attempt: value.attempt, outcome: value.outcome, finishReason: value.finishReason,
     model: INTERPRETATION_MODEL, reasoningEffort: INTERPRETATION_REASONING_EFFORT, maxCompletionTokens: INTERPRETATION_MAX_COMPLETION_TOKENS };
-  for (const key of ["expectedRibbons", "providerStatus", "promptTokens", "completionTokens", "totalTokens", "reasoningTokens", "cachedPromptTokens"] as const)
+  for (const key of ["expectedRibbons", "providerStatus", "promptTokens", "completionTokens", "totalTokens", "reasoningTokens", "cachedPromptTokens", "elapsedMs", "attemptElapsedMs", "attemptTimeoutMs", "totalTimeoutMs", "workTimeoutMs"] as const)
     if (typeof value[key] === "number" && Number.isSafeInteger(value[key]) && value[key]! >= 0) safe[key] = value[key]!;
+  if (["none", "client-abort", "attempt-timeout", "work-timeout", "total-timeout", "sdk-timeout", "insufficient-time"].includes(value.abortSource ?? "")) safe.abortSource = value.abortSource!;
   const cost = estimateAnalysisStandardCostUsd(value);
   if (cost !== undefined) safe.estimatedStandardCostUsd = cost;
-  console.info("[aurora-interpretation-server]", safe);
+  try { console.info("[aurora-interpretation-server]", safe); } catch { /* Diagnostics must not trigger a paid retry or replace the result. */ }
 }
 export interface AuroraInterpretationDependencies {
   apiKey: () => string | undefined;
-  complete: (options: { apiKey: string; context: AuroraInterpretationContext; attempt: 1 | 2; signal: AbortSignal }) => Promise<AnalysisCompletion>;
+  complete: (options: { apiKey: string; context: AuroraInterpretationContext; attempt: 1 | 2; signal: AbortSignal; timeoutMs: number; remainingMs: () => number }) => Promise<AnalysisCompletion>;
   diagnostic?: (value: InterpretationDiagnostic) => void;
+  isTimeoutError?: (error: unknown) => boolean;
+  deadline?: InterpretationDeadline;
 }
 const fail = (code: AuroraInterpretationErrorCode, status: number) => Response.json({ code,
   error: "해석을 완성하지 못했습니다. 답변과 승인한 문장은 유지됩니다. 입력 상태를 확인하거나 잠시 후 다시 시도해 주세요.",
@@ -98,46 +104,74 @@ async function readInput(req: Request): Promise<unknown> {
 }
 export function createAuroraInterpretationHandler(deps: AuroraInterpretationDependencies) {
   return async (req: Request): Promise<Response> => {
-    if (req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("INVALID_INPUT", 415);
-    if (req.headers.get("sec-fetch-site") === "cross-site") return fail("INVALID_INPUT", 403);
-    let context: AuroraInterpretationContext;
-    try {
-      context = await prepareAuroraInterpretation(await readInput(req));
-      if (JSON.stringify(interpretationModelInput(context)).length > INTERPRETATION_LIMITS.modelInputCharacters) throw new AuroraInterpretationError("REQUEST_TOO_LARGE");
-    } catch (e) {
-      const code = e instanceof AuroraInterpretationError ? e.code : "INVALID_INPUT";
-      return fail(code, code === "REQUEST_TOO_LARGE" ? 413 : code === "APPROVAL_MISMATCH" ? 409 : 400);
-    }
-    const apiKey = deps.apiKey()?.trim();
-    if (!apiKey) return fail("AI_NOT_CONFIGURED", 503);
-    const signal = AbortSignal.any([req.signal, AbortSignal.timeout(INTERPRETATION_LIMITS.totalMs)]), diagnostic = deps.diagnostic ?? logInterpretationDiagnostic;
-    for (const attempt of [1, 2] as const) {
-      if (signal.aborted) return fail("INTERPRETATION_FAILED", 408);
-      const attemptSignal = AbortSignal.any([signal, AbortSignal.timeout(INTERPRETATION_LIMITS.attemptMs)]);
-      let completion: AnalysisCompletion;
-      try { completion = await deps.complete({ apiKey, context: structuredClone(context), attempt, signal: attemptSignal }); }
-      catch (e) {
-        const status = isRecord(e) && typeof e.status === "number" && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599 ? e.status : undefined;
-        diagnostic({ attempt, outcome: attemptSignal.aborted ? "cancelled" : "generation-failed", finishReason: "unknown", expectedRibbons: context.facts.ribbons.length, providerStatus: status });
-        return fail("INTERPRETATION_FAILED", attemptSignal.aborted ? 408 : status === 429 ? 429 : 502);
-      }
-      const finishReason = ["stop", "length", "content_filter"].includes(completion.finishReason ?? "") ? completion.finishReason as InterpretationDiagnostic["finishReason"] : "unknown";
-      const metadata: InterpretationDiagnostic = { attempt, outcome: "invalid-output", finishReason, expectedRibbons: context.facts.ribbons.length,
-        promptTokens: completion.usage?.promptTokens, completionTokens: completion.usage?.completionTokens, totalTokens: completion.usage?.totalTokens,
-        reasoningTokens: completion.usage?.reasoningTokens, cachedPromptTokens: completion.usage?.cachedPromptTokens };
-      if (attemptSignal.aborted) { diagnostic({ ...metadata, outcome: "cancelled" }); return fail("INTERPRETATION_FAILED", 408); }
-      if (completion.refused || finishReason !== "stop") { diagnostic(metadata); return fail("INTERPRETATION_RESPONSE_INVALID", 502); }
+    const deadline = deps.deadline ?? new InterpretationDeadline(req.signal);
+    const processRequest = async (): Promise<Response> => {
+      const startedAt = deadline.startedAt;
+      deadline.checkWork(); deadline.stage("input");
+      if (req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("INVALID_INPUT", 415);
+      if (req.headers.get("sec-fetch-site") === "cross-site") return fail("INVALID_INPUT", 403);
+      let context: AuroraInterpretationContext;
       try {
-        const interpretation = parseAuroraInterpretation(completion.content, context);
-        diagnostic({ ...metadata, outcome: "success" });
-        return Response.json({ interpretation }, { headers: { "Cache-Control": "no-store" } });
+        context = await awaitSignal(prepareAuroraInterpretation(await awaitSignal(readInput(req), deadline.signal)), deadline.signal);
+        if (JSON.stringify(interpretationModelInput(context)).length > INTERPRETATION_LIMITS.modelInputCharacters) throw new AuroraInterpretationError("REQUEST_TOO_LARGE");
       } catch (e) {
-        diagnostic(metadata);
-        if (e instanceof AuroraInterpretationError && e.code === "QUOTE_CANDIDATES_INSUFFICIENT") return fail(e.code, 422);
-        if (attempt < INTERPRETATION_LIMITS.maxAttempts) continue;
-        return fail("INTERPRETATION_RESPONSE_INVALID", 502);
+        if (isRecord(e) && e.code === "REQUEST_TIMEOUT") throw e;
+        const code = e instanceof AuroraInterpretationError ? e.code : "INVALID_INPUT";
+        return fail(code, code === "REQUEST_TOO_LARGE" ? 413 : code === "APPROVAL_MISMATCH" ? 409 : 400);
       }
-    }
-    return fail("INTERPRETATION_FAILED", 502);
+      deadline.checkWork();
+      const apiKey = deps.apiKey()?.trim();
+      if (!apiKey) return fail("AI_NOT_CONFIGURED", 503);
+      const diagnostic = deps.diagnostic ?? logInterpretationDiagnostic;
+      for (const attempt of [1, 2] as const) {
+        deadline.checkWork();
+        const window = deadline.attempt(); deadline.stage("model");
+        try {
+          const attemptStartedAt = performance.now();
+          const timing = () => ({ elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+            attemptElapsedMs: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
+            attemptTimeoutMs: window.timeoutMs, totalTimeoutMs: INTERPRETATION_TIMING.totalMs, workTimeoutMs: INTERPRETATION_TIMING.workMs });
+          const abortSource = window.source;
+          let completion: AnalysisCompletion;
+          try { completion = await deps.complete({ apiKey, context: structuredClone(context), attempt, signal: window.signal, timeoutMs: window.timeoutMs, remainingMs: window.remainingMs }); }
+          catch (e) {
+            const status = isRecord(e) && typeof e.status === "number" && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599 ? e.status : undefined;
+            const source = abortSource() !== "none" ? abortSource() : deps.isTimeoutError?.(e) ? "sdk-timeout" : isRecord(e) && e.code === "REQUEST_TIMEOUT" ? "insufficient-time" : "none";
+            diagnostic({ attempt, outcome: source !== "none" ? "cancelled" : "generation-failed", finishReason: "unknown", expectedRibbons: context.facts.ribbons.length,
+              providerStatus: status, abortSource: source, ...timing() });
+            return fail("INTERPRETATION_FAILED", source !== "none" ? 408 : status === 429 ? 429 : 502);
+          }
+          const finishReason = ["stop", "length", "content_filter"].includes(completion.finishReason ?? "") ? completion.finishReason as InterpretationDiagnostic["finishReason"] : "unknown";
+          const metadata: InterpretationDiagnostic = { attempt, outcome: "invalid-output", finishReason, expectedRibbons: context.facts.ribbons.length,
+            promptTokens: completion.usage?.promptTokens, completionTokens: completion.usage?.completionTokens, totalTokens: completion.usage?.totalTokens,
+            reasoningTokens: completion.usage?.reasoningTokens, cachedPromptTokens: completion.usage?.cachedPromptTokens };
+          Object.assign(metadata, timing(), { abortSource: abortSource() });
+          if (abortSource() !== "none") { diagnostic({ ...metadata, outcome: "cancelled" }); return fail("INTERPRETATION_FAILED", 408); }
+          if (completion.refused || finishReason !== "stop") { diagnostic(metadata); return fail("INTERPRETATION_RESPONSE_INVALID", 502); }
+          try {
+            const interpretation = parseAuroraInterpretation(completion.content, context);
+            deadline.checkWork();
+            diagnostic({ ...metadata, outcome: "success" });
+            return Response.json({ interpretation }, { headers: { "Cache-Control": "no-store" } });
+          } catch (e) {
+            if (abortSource() !== "none") { diagnostic({ ...metadata, outcome: "cancelled", abortSource: abortSource() }); return fail("INTERPRETATION_FAILED", 408); }
+            diagnostic(metadata);
+            if (e instanceof AuroraInterpretationError && e.code === "QUOTE_CANDIDATES_INSUFFICIENT") return fail(e.code, 422);
+            if (attempt < INTERPRETATION_LIMITS.maxAttempts) {
+              if (deadline.remainingWorkMs() >= INTERPRETATION_TIMING.minAttemptMs) continue;
+              diagnostic({ ...metadata, outcome: "cancelled", abortSource: "insufficient-time" });
+              return fail("INTERPRETATION_FAILED", 408);
+            }
+            return fail("INTERPRETATION_RESPONSE_INVALID", 502);
+          }
+        } finally { window.dispose(); }
+      }
+      return fail("INTERPRETATION_FAILED", 502);
+    };
+    try { return await deadline.respond(processRequest()); }
+    catch (error) {
+      if (deadline.source() !== "none" || isRecord(error) && error.code === "REQUEST_TIMEOUT") return fail("INTERPRETATION_FAILED", 408);
+      throw error;
+    } finally { if (!deps.deadline) deadline.dispose(); }
   };
 }

@@ -3,6 +3,7 @@ import { locked } from "./database";
 import { authConfig, budgetConfig, featureBudgetConfig, cost, featureModel, SecurityError, seoulPeriods, type Feature } from "./policy";
 import type { Principal } from "./auth";
 import { logModelBudgetMismatch, type ModelBudgetMismatch } from "./model-budget-diagnostics";
+import { awaitSignal } from "../interpretation-deadline";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -40,12 +41,16 @@ interface Completion { usage?: { prompt_tokens: number; completion_tokens: numbe
 export class ModelPermit {
   fault: SecurityError | undefined;
   revalidate: (()=>Promise<void>) | undefined;
+  beforeModelCall: (()=>void) | undefined;
   private async infrastructure<T>(fn:()=>Promise<T>):Promise<T> {
     try{return await fn();}catch(e){this.fault=e instanceof SecurityError?e:new SecurityError("SECURITY_UNAVAILABLE");throw this.fault;}
   }
   constructor(readonly id:string,readonly userId:string,readonly feature:Feature,readonly config:ReturnType<typeof budgetConfig>) {}
-  async run<T extends Completion>(params: { model:string; max_completion_tokens?:number|null }, call:()=>Promise<T>):Promise<T> {
-    if(this.revalidate)await this.infrastructure(this.revalidate);
+  async run<T extends Completion>(params: { model:string; max_completion_tokens?:number|null }, call:()=>Promise<T>, signal?:AbortSignal):Promise<T> {
+    const check=()=>{if(signal?.aborted)throw new SecurityError('REQUEST_TIMEOUT',408);this.beforeModelCall?.();};
+    check();
+    if(this.revalidate)await this.infrastructure(()=>awaitSignal(this.revalidate!(),signal));
+    check();
     const model=featureModel(this.feature), p=this.config.prices[model.model];
     // UTF-8 byte length is a deliberately conservative token upper estimate;
     // include schema/messages and an overhead allowance, reject over configured cap.
@@ -60,16 +65,18 @@ export class ModelPermit {
       throw this.fault;
     }
     const number = await this.infrastructure(()=>locked(async db=>{
+      check();
       const request=(await db.query(`SELECT * FROM ai_request WHERE id=$1 AND state='pending' AND expires_at>now()`,[this.id])).rows[0];
       const user=(await db.query('SELECT status FROM "user" WHERE id=$1',[this.userId])).rows[0];
       const running=(await db.query("SELECT 1 FROM ai_attempt WHERE request_id=$1 AND state='started'",[this.id])).rowCount;
       if(!request||user?.status!=='active'||request.attempts>=model.attempts||running) throw new SecurityError('MODEL_NOT_AUTHORIZED',403);
+      check();
       const n=request.attempts+1;
       await db.query('UPDATE ai_request SET attempts=$2 WHERE id=$1',[this.id,n]);
-      await db.query('INSERT INTO ai_attempt(request_id,number,model) VALUES($1,$2,$3)',[this.id,n,model.model]);return n;
+      await db.query('INSERT INTO ai_attempt(request_id,number,model) VALUES($1,$2,$3)',[this.id,n,model.model]);check();return n;
     }));
     let response:T;
-    try { response=await call(); }
+    try { check();response=await awaitSignal(call(),signal); }
     catch (error) {
       await this.infrastructure(()=>locked(db=>db.query("UPDATE ai_attempt SET state='uncertain', finished_at=now() WHERE request_id=$1 AND number=$2",[this.id,number])));
       throw error;

@@ -130,7 +130,8 @@ test('schema contains every active ID and only supported basic schema constraint
     if(s.type==='array')walk(s.items);
   }walk(root);
   assert.equal(INTERPRETATION_MODEL,'gpt-6.1-sol');assert.equal(INTERPRETATION_REASONING_EFFORT,'medium');assert.equal(INTERPRETATION_MAX_COMPLETION_TOKENS,25000);
-  assert.equal(INTERPRETATION_LIMITS.attemptMs,45000);assert.equal(INTERPRETATION_LIMITS.maxAttempts,2);
+  assert.equal(INTERPRETATION_LIMITS.attemptMs,70000);assert.equal(INTERPRETATION_LIMITS.workMs,85000);
+  assert.equal(INTERPRETATION_LIMITS.totalMs,95000);assert.equal(INTERPRETATION_LIMITS.maxAttempts,2);
 });
 test('valid output assembles exact code facts, catalog quote, approved text and stable order', async () => {
   const c=await context(),saved=structuredClone(c),body=fixture(c);body.ribbons=Object.fromEntries(Object.entries(body.ribbons).reverse());
@@ -206,9 +207,10 @@ test('cancellation and late completion cannot return a stale success',async()=>{
   assert.equal((await s.handler(request(input(),{signal:controller.signal}))).status,408);assert.equal(s.calls.length,1);
   const early=new AbortController();early.abort();const t=service();assert.equal((await t.handler(request(input(),{signal:early.signal}))).status,408);assert.equal(t.calls.length,0);
 });
-test('attempt deadline stays 45s inside the existing 95s request budget, without timeout retry',async t=>{
-  const observed=[];t.mock.method(AbortSignal,'timeout',ms=>{observed.push(ms);const c=new AbortController();if(ms===45000)c.abort();return c.signal;});
-  const s=service();assert.equal((await s.handler(request())).status,408);assert.deepEqual(observed,[95000,45000]);assert.equal(s.calls.length,1);
+test('approved 70s attempt is bounded by 85s work and 95s total without timeout retry',async t=>{
+  const observed=[],native=setTimeout;t.mock.method(performance,'now',()=>0);
+  t.mock.method(globalThis,'setTimeout',(fn,ms,...args)=>{observed.push(ms);if(ms===70000){queueMicrotask(fn);return native(()=>{},1);}return native(fn,ms,...args);});
+  const s=service();assert.equal((await s.handler(request())).status,408);assert.deepEqual(observed,[85000,95000,70000]);assert.equal(s.calls.length,1);
 });
 test('actual streamed body limit is enforced even without Content-Length',async()=>{
   const s=service(),r=request(input(),{body:' '.repeat(INTERPRETATION_LIMITS.bodyBytes+1)});
@@ -235,11 +237,11 @@ test('model input excludes lossless approval fingerprint and original state mach
   assert.ok(!data.includes(p.approval.inputFingerprint));assert.ok(!data.includes('inputFingerprint'));assert.ok(!data.includes('approvedAt'));assert.ok(!data.includes('comments'));
 });
 test('diagnostics allowlist numeric metadata and count reasoning only within completion tokens',()=>{
-  const old=process.env.NODE_ENV,info=console.info,entries=[];process.env.NODE_ENV='development';console.info=(...args)=>entries.push(args);
+  const old=process.env.NODE_ENV,oldPreview=process.env.VERCEL_ENV,info=console.info,entries=[];process.env.NODE_ENV='development';process.env.VERCEL_ENV='preview';console.info=(...args)=>entries.push(args);
   try{logInterpretationDiagnostic({attempt:1,outcome:'success',finishReason:'stop',expectedRibbons:5,promptTokens:1000,completionTokens:2000,reasoningTokens:1200,
     apiKey:'DO_NOT_LOG',inputFingerprint:'DO_NOT_LOG',content:'DO_NOT_LOG',requestDigest:'DO_NOT_LOG'});
     assert.equal(entries.length,1);assert.ok(!JSON.stringify(entries).includes('DO_NOT_LOG'));assert.equal(entries[0][1].estimatedStandardCostUsd,.022);
-  }finally{console.info=info;if(old===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=old;}
+  }finally{console.info=info;if(old===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=old;if(oldPreview===undefined)delete process.env.VERCEL_ENV;else process.env.VERCEL_ENV=oldPreview;}
 });
 test('legacy analyze still returns exactly ten comments; its prompt/model contract is unchanged',async()=>{
   const handler=createAnalysisHandler({apiKey:()=> 'mock-only',complete:async()=>({content:JSON.stringify({analyses:Object.fromEntries(Array.from({length:10},(_,i)=>[`q${i+1}`,{questionId:`q${i+1}`,analysis:'기존 요약',detailedAnalysis:'기존 상세'}]))}),finishReason:'stop',refused:false})});
@@ -251,7 +253,7 @@ test('new route adapter keeps model, medium, timeout, strict schema and SDK retr
   class MockOpenAI{constructor(value){config=value;this.chat={completions:{create:async(request)=>{options=request;calls++;const c=await context();const b=completion(c);return {choices:[{finish_reason:'stop',message:{content:b.content}}],usage:{prompt_tokens:100,completion_tokens:200,total_tokens:300}};}}};}}
   const old=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='mock-only';
   try{const routeAdapter=createModuleLoader({openai:MockOpenAI,"../../../lib/server/security/api":{protectAI:(_feature,handler)=>req=>handler(req,{run:(_params,call)=>call()})}})('app/api/aurora-interpretation/route.ts');assert.equal((await routeAdapter.POST(request())).status,200);
-    assert.equal(calls,1);assert.equal(config.maxRetries,0);assert.equal(config.logLevel,'off');assert.equal(config.timeout,45000);
+    assert.equal(calls,1);assert.equal(config.maxRetries,0);assert.equal(config.logLevel,'off');assert.ok(config.timeout>0&&config.timeout<=70000);
     assert.equal(options.model,'gpt-6.1-sol');assert.equal(options.reasoning_effort,'medium');assert.equal(options.max_completion_tokens,25000);assert.equal(options.response_format.json_schema.strict,true);
     for(const key of ['temperature','top_p','logprobs','max_tokens'])assert.ok(!(key in options));
   }finally{if(old===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=old;}

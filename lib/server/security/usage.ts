@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { locked } from "./database";
 import { authConfig, budgetConfig, cost, featureModel, SecurityError, seoulPeriods, type Feature } from "./policy";
 import type { Principal } from "./auth";
+import { logModelBudgetMismatch, type ModelBudgetMismatch } from "./model-budget-diagnostics";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -48,7 +49,16 @@ export class ModelPermit {
     const model=featureModel(this.feature), p=this.config.prices[model.model];
     // UTF-8 byte length is a deliberately conservative token upper estimate;
     // include schema/messages and an overhead allowance, reject over configured cap.
-    if(params.model!==model.model||params.max_completion_tokens!==model.output||Buffer.byteLength(JSON.stringify(params),'utf8')+4096>p.maxInputTokens) { this.fault=new SecurityError('MODEL_BUDGET_MISMATCH'); throw this.fault; }
+    const inputBytesWithOverhead=Buffer.byteLength(JSON.stringify(params),'utf8')+4096;
+    const mismatches: ModelBudgetMismatch[]=[];
+    if(params.model!==model.model)mismatches.push('MODEL_NAME_MISMATCH');
+    if(params.max_completion_tokens!==model.output)mismatches.push('MAX_OUTPUT_TOKENS_MISMATCH');
+    if(inputBytesWithOverhead>p.maxInputTokens)mismatches.push('INPUT_BYTES_EXCEEDED');
+    if(mismatches.length) {
+      this.fault=new SecurityError('MODEL_BUDGET_MISMATCH');
+      logModelBudgetMismatch(this.feature,mismatches,inputBytesWithOverhead,p.maxInputTokens,params.max_completion_tokens);
+      throw this.fault;
+    }
     const number = await this.infrastructure(()=>locked(async db=>{
       const request=(await db.query(`SELECT * FROM ai_request WHERE id=$1 AND state='pending' AND expires_at>now()`,[this.id])).rows[0];
       const user=(await db.query('SELECT status FROM "user" WHERE id=$1',[this.userId])).rows[0];

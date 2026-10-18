@@ -5,18 +5,20 @@ import { canonicalInterpretationValue, validateAuroraInterpretationResponse } fr
 import { createAuroraRibbonLayout } from "./aurora-ribbon-layout";
 import type { AuroraQuality, AuroraFlowMode } from "./aurora-types";
 import type { QuestionnaireState } from "./questionnaire-state";
+import { AI_USAGE_MESSAGES, isAIUsageErrorCode, type AIUsageErrorCode } from "./ai-usage-errors";
 
 export type AuroraUniverseResult = { version: "aurora-universe-v1"; snapshot: AuroraResultSnapshot; context: AuroraInterpretationContext } & (
   { status: "interpreted"; interpretation: AuroraInterpretationResult } |
   { status: "quote-unavailable"; interpretation: null });
-export type AuroraUniverseFailure = "AI_NOT_CONFIGURED" | "INVALID_INPUT" | "APPROVAL_MISMATCH" | "REQUEST_TOO_LARGE"
+export type AuroraUniverseFailure = AIUsageErrorCode | "AI_NOT_CONFIGURED" | "INVALID_INPUT" | "APPROVAL_MISMATCH" | "REQUEST_TOO_LARGE"
   | "AUTH_REQUIRED" | "ACCESS_DENIED" | "USAGE_LIMITED" | "SECURITY_UNAVAILABLE"
   | "INTERPRETATION_FAILED" | "INTERPRETATION_RESPONSE_INVALID" | "CONNECTION_FAILED" | "REQUEST_TIMEOUT" | "RESULT_TRANSITION_FAILED";
 export type AuroraUniversePhase = "preparing" | "requesting" | "validating";
 const failures: readonly AuroraUniverseFailure[] = ["AI_NOT_CONFIGURED", "INVALID_INPUT", "APPROVAL_MISMATCH", "REQUEST_TOO_LARGE", "INTERPRETATION_FAILED",
-  "INTERPRETATION_RESPONSE_INVALID", "CONNECTION_FAILED", "REQUEST_TIMEOUT", "RESULT_TRANSITION_FAILED", "AUTH_REQUIRED", "ACCESS_DENIED", "USAGE_LIMITED", "SECURITY_UNAVAILABLE"];
+  "INTERPRETATION_RESPONSE_INVALID", "CONNECTION_FAILED", "REQUEST_TIMEOUT", "RESULT_TRANSITION_FAILED", "AUTH_REQUIRED", "ACCESS_DENIED", "USAGE_LIMITED", "SECURITY_UNAVAILABLE", ...Object.keys(AI_USAGE_MESSAGES) as AIUsageErrorCode[]];
 export function auroraUniverseFailureMessage(code: AuroraUniverseFailure): string {
   const messages: Record<AuroraUniverseFailure, string> = {
+    ...AI_USAGE_MESSAGES,
     AUTH_REQUIRED: "세션이 만료되었어요. 다시 로그인해 주세요.", ACCESS_DENIED: "계정 권한 또는 요청 출처를 확인해 주세요.",
     USAGE_LIMITED: "사용 한도에 도달했거나 생성이 진행 중이에요. 잠시 후 다시 시도해 주세요.", SECURITY_UNAVAILABLE: "보안 또는 예산 설정을 확인하지 못했어요. 관리자에게 문의해 주세요.",
     AI_NOT_CONFIGURED: "해석 서비스가 아직 설정되지 않았어요. 관리자에게 설정을 확인해 주세요.",
@@ -101,7 +103,7 @@ export class AuroraUniverseRequestController {
         if (response.status === 422 && code === "QUOTE_CANDIDATES_INSUFFICIENT") {
           result = { version: "aurora-universe-v1", snapshot: prepared.snapshot, context, status: "quote-unavailable", interpretation: null };
         } else {
-          callbacks.failure(response.status === 401 ? "AUTH_REQUIRED" : response.status === 403 ? "ACCESS_DENIED" : response.status === 429 ? "USAGE_LIMITED" : response.status === 503 && code !== "AI_NOT_CONFIGURED" ? "SECURITY_UNAVAILABLE" : response.status === 408 ? "REQUEST_TIMEOUT" : typeof code === "string" && failures.includes(code as AuroraUniverseFailure)
+          callbacks.failure(response.status === 401 ? "AUTH_REQUIRED" : response.status === 403 ? "ACCESS_DENIED" : response.status === 429 ? isAIUsageErrorCode(code) ? code : "USAGE_LIMITED" : response.status === 503 && code !== "AI_NOT_CONFIGURED" ? "SECURITY_UNAVAILABLE" : response.status === 408 ? "REQUEST_TIMEOUT" : typeof code === "string" && failures.includes(code as AuroraUniverseFailure)
             ? code as AuroraUniverseFailure : "INTERPRETATION_FAILED"); return;
         }
       } else result = { version: "aurora-universe-v1", snapshot: prepared.snapshot, context, status: "interpreted", interpretation: validateAuroraInterpretationResponse(body, context) };

@@ -1,5 +1,6 @@
 import { QUESTION_DATA, type AnswerIntent, type QuestionId } from "./question-data";
 import type { SelectedCapsule } from "./capsules";
+import { AI_USAGE_MESSAGES, type AIUsageErrorCode } from "./ai-usage-errors";
 
 export const CLOSING_MESSAGE_LIMITS = { bodyBytes: 131072, selectionsPerQuestion: 100, totalSelections: 300, totalText: 24000, authoredText: 1000, authoredWord: 16, aiText: 80, finalText: 1000 } as const;
 export type ClosingMessageSource = "ai" | "user-edited" | "user-authored";
@@ -24,8 +25,9 @@ export interface ClosingMessageInput {
   authoredWord: string;
   context: { questionId: QuestionId; status: "pending" | "answered" | "skipped"; selections: ClosingSelection[] }[];
 }
-export type ClosingErrorCode = "INVALID_INPUT" | "REQUEST_TOO_LARGE" | "AI_NOT_CONFIGURED" | "CLOSING_FAILED" | "INVALID_AI_RESPONSE" | "RATE_LIMITED" | "REQUEST_FORBIDDEN" | "REQUEST_CANCELLED" | "AUTH_REQUIRED" | "SECURITY_UNAVAILABLE";
+export type ClosingErrorCode = AIUsageErrorCode | "INVALID_INPUT" | "REQUEST_TOO_LARGE" | "AI_NOT_CONFIGURED" | "CLOSING_FAILED" | "INVALID_AI_RESPONSE" | "RATE_LIMITED" | "REQUEST_FORBIDDEN" | "REQUEST_CANCELLED" | "AUTH_REQUIRED" | "SECURITY_UNAVAILABLE";
 export const CLOSING_ERRORS: Record<ClosingErrorCode, string> = {
+  ...AI_USAGE_MESSAGES,
   AUTH_REQUIRED: "세션이 만료되었어요. 다시 로그인해 주세요.",
   SECURITY_UNAVAILABLE: "보안 또는 예산 설정을 확인하지 못했어요. 관리자에게 문의해 주세요. 작성한 원문은 유지됩니다.",
   INVALID_INPUT: "입력을 확인해 주세요. 담은 표현이나 직접 쓴 말이 필요하며, 한 질문에 최대 100개·전체 300개의 선택을 사용할 수 있어요.",

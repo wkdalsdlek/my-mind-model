@@ -1,9 +1,10 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { locked } from "./database";
-import { authConfig, budgetConfig, featureBudgetConfig, cost, featureModel, SecurityError, seoulPeriods, type Feature } from "./policy";
+import { authConfig, budgetConfig, featureBudgetConfig, cost, featureModel, SecurityError, seoulPeriods, periodRetrySeconds, type Feature } from "./policy";
 import type { Principal } from "./auth";
 import { logModelBudgetMismatch, type ModelBudgetMismatch } from "./model-budget-diagnostics";
 import { awaitSignal } from "../interpretation-deadline";
+import { logUsageDenial, logUsageAccounting, type LimitReason, type UsageLimitNumbers } from "./usage-diagnostics";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -24,14 +25,37 @@ export async function reserveUsage(user: Principal, feature: Feature, digest: st
     if (feature==='analyze' && fresh.role!=='owner') throw new SecurityError('OWNER_REQUIRED',403);
     const rows = (await db.query(`SELECT user_id,feature,day,month,state,digest,created_at,attempts,charged_usd FROM ai_request WHERE month=$1 OR state='pending' OR created_at>now()-interval '2 minutes'`,[month])).rows;
     const counted = rows.filter(r=>r.state==='pending'||r.attempts>0);
-    if (counted.filter(r=>r.state==='pending').length>=config.concurrency || counted.some(r=>r.user_id===user.id&&r.state==='pending')) throw new SecurityError('AI_BUSY',429);
-    if (rows.some(r=>r.user_id===user.id&&r.digest===digest&&new Date(r.created_at).getTime()>clock.getTime()-60000&&r.attempts>0)) throw new SecurityError('DUPLICATE_REQUEST',429);
     const limit = feature==='closing'?fresh.closingDaily:feature==='interpretation'?fresh.interpretationDaily:fresh.analyzeDaily;
-    if(counted.filter(r=>r.user_id===user.id&&r.feature===feature&&r.day===day).length>=limit) throw new SecurityError('USER_DAILY_LIMIT',429);
-    if(counted.filter(r=>r.day===day).length>=config.globalDayRequests||counted.filter(r=>r.month===month).length>=config.globalMonthRequests) throw new SecurityError('GLOBAL_REQUEST_LIMIT',429);
-    const sum=(filter:(r:typeof rows[number])=>boolean)=>rows.filter(filter).reduce((s,r)=>s+Number(r.charged_usd),0);
     const userBudget = fresh.monthlyBudget ? Number(fresh.monthlyBudget) : config.userMonth;
-    if(sum(r=>r.user_id===user.id&&r.month===month)+reserved>userBudget || sum(r=>r.day===day)+reserved>config.globalDay || sum(r=>r.month===month)+reserved>config.globalMonth) throw new SecurityError('AI_BUDGET_LIMIT',429);
+    const numbers: UsageLimitNumbers = { reservedUsd: reserved, userDayRequests: counted.filter(r=>r.user_id===user.id&&r.feature===feature&&r.day===day).length,
+      userDayLimit: limit, globalDayRequests: counted.filter(r=>r.day===day).length, globalDayLimit: config.globalDayRequests,
+      globalMonthRequests: counted.filter(r=>r.month===month).length, globalMonthLimit: config.globalMonthRequests,
+      pendingRequests: counted.filter(r=>r.state==='pending').length, concurrencyLimit: config.concurrency,
+      maxInputTokens: price.maxInputTokens, maxOutputTokens: model.output, maxAttempts: model.attempts };
+    const deny = (code: 'AI_BUDGET_LIMIT'|'USER_DAILY_LIMIT'|'GLOBAL_REQUEST_LIMIT'|'AI_BUSY'|'DUPLICATE_REQUEST', reasons: LimitReason[], retry?:number): never => {
+      logUsageDenial(feature,code,reasons,numbers,fresh.monthlyBudget?'account':'environment');
+      throw new SecurityError(code,429,retry);
+    };
+    const busy: LimitReason[]=[];
+    if(numbers.pendingRequests! >= config.concurrency)busy.push('GLOBAL_CONCURRENCY');
+    if(counted.some(r=>r.user_id===user.id&&r.state==='pending'))busy.push('USER_CONCURRENCY');
+    if(busy.length)deny('AI_BUSY',busy);
+    const duplicate=rows.find(r=>r.user_id===user.id&&r.digest===digest&&new Date(r.created_at).getTime()>clock.getTime()-60000&&r.attempts>0);
+    if(duplicate)deny('DUPLICATE_REQUEST',['DUPLICATE_WINDOW'],Math.max(1,Math.ceil((new Date(duplicate.created_at).getTime()+60000-clock.getTime())/1000)));
+    if(numbers.userDayRequests! >= limit)deny('USER_DAILY_LIMIT',['USER_DAY_REQUESTS'],periodRetrySeconds(clock));
+    const requests: LimitReason[]=[];
+    if(numbers.globalDayRequests! >= config.globalDayRequests)requests.push('GLOBAL_DAY_REQUESTS');
+    if(numbers.globalMonthRequests! >= config.globalMonthRequests)requests.push('GLOBAL_MONTH_REQUESTS');
+    if(requests.length)deny('GLOBAL_REQUEST_LIMIT',requests,periodRetrySeconds(clock,requests.includes('GLOBAL_MONTH_REQUESTS')));
+    const sum=(filter:(r:typeof rows[number])=>boolean)=>rows.filter(filter).reduce((s,r)=>s+Number(r.charged_usd),0);
+    const userSpent=sum(r=>r.user_id===user.id&&r.month===month), daySpent=sum(r=>r.day===day), monthSpent=sum(r=>r.month===month);
+    Object.assign(numbers,{userMonthChargedUsd:userSpent,userMonthLimitUsd:userBudget,globalDayChargedUsd:daySpent,globalDayLimitUsd:config.globalDay,
+      globalMonthChargedUsd:monthSpent,globalMonthLimitUsd:config.globalMonth});
+    const money: LimitReason[]=[];
+    if(userSpent+reserved>userBudget)money.push('USER_MONTH_USD');
+    if(daySpent+reserved>config.globalDay)money.push('GLOBAL_DAY_USD');
+    if(monthSpent+reserved>config.globalMonth)money.push('GLOBAL_MONTH_USD');
+    if(money.length)deny('AI_BUDGET_LIMIT',money);
     const id=randomUUID();
     await db.query(`INSERT INTO ai_request(id,user_id,feature,digest,day,month,reserved_usd,charged_usd,expires_at,price_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$7,now()+interval '5 minutes',$8)`,[id,user.id,feature,digest,day,month,reserved,JSON.stringify({model: model.model,...price,maxOutputTokens:model.output,maxAttempts:model.attempts})]);
     return new ModelPermit(id,user.id,feature,config);
@@ -86,10 +110,12 @@ export class ModelPermit {
     const estimate=known?Math.ceil(cost(p,input!,output!,cached)*1e8)/1e8:null;
     await this.infrastructure(()=>locked(db=>db.query(`UPDATE ai_attempt SET state=$3,finished_at=now(),prompt_tokens=$4,completion_tokens=$5,cached_tokens=$6,reasoning_tokens=$7,estimated_usd=$8 WHERE request_id=$1 AND number=$2`,
       [this.id,number,known?'reported':'uncertain',known?input:null,known?output:null,known?cached:null,known?reasoning:null,estimate])));
+    logUsageAccounting(this.feature,'model.usage',known?'reported':'uncertain',{
+      promptTokens:known?input:null,completionTokens:known?output:null,cachedTokens:known?cached:null,reasoningTokens:known?reasoning:null,estimatedUsd:estimate });
     return response;
   }
   async finish(success:boolean) {
-    await locked(async db=>{
+    const settled=await locked(async db=>{
       const row=(await db.query('SELECT * FROM ai_request WHERE id=$1',[this.id])).rows[0];
       if(!row||row.state!=='pending') return;
       const attempts=(await db.query('SELECT state,estimated_usd FROM ai_attempt WHERE request_id=$1',[this.id])).rows;
@@ -97,6 +123,9 @@ export class ModelPermit {
       const actual=attempts.reduce((s,a)=>s+Number(a.estimated_usd||0),0);
       await db.query(`UPDATE ai_request SET state=$2,finished_at=now(),estimated_usd=$3,charged_usd=$4 WHERE id=$1`,
         [this.id,success?'success':row.attempts?'failed':'no-model',actual,row.attempts===0?0:known?actual:row.reserved_usd]);
+      return { attempts:Number(row.attempts),reservedUsd:Number(row.reserved_usd),estimatedUsd:known?actual:null,
+        chargedUsd:row.attempts===0?0:known?actual:Number(row.reserved_usd) };
     });
+    if(settled)logUsageAccounting(this.feature,'usage.finish',success?'success':settled.attempts?'failed':'no-model',settled);
   }
 }

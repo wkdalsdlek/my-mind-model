@@ -213,6 +213,9 @@ test("successful response without token usage keeps the existing full-reservatio
 test("authentication time is deducted from the first attempt rather than resetting the clock", async t => {
   const s = scenario(t, [{ delay: 60000 }], { authenticationDelayMs: 20000 });
   await until(() => s.counts.auth === 1); await s.clock.advance(20000);
+  // Request preparation includes asynchronous WebCrypto; a single event-loop
+  // flush is not a completion barrier under parallel test load.
+  await until(() => s.counts.provider === 1);
   assert.equal(s.counts.provider, 1); await s.clock.advance(60000);
   assert.equal((await s.promise).status, 200);
   assert.equal(s.diagnostics[0].attemptTimeoutMs, 65000); assert.equal(s.diagnostics[0].elapsedMs, 80000);

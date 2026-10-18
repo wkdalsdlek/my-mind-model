@@ -1,4 +1,5 @@
 import { closingInputFingerprint, CLOSING_ERRORS, validAIClosingText, validateClosingMessageInput, type ClosingErrorCode, type ClosingMessageInput } from "./closing-message";
+import { isAIUsageErrorCode } from "./ai-usage-errors";
 
 interface RequestCallbacks {
   start: (id: string, inputFingerprint: string) => void;
@@ -43,7 +44,8 @@ export class ClosingMessageRequestController {
       if (this.active !== request) return;
       stage = "response";
       if (!response.ok) {
-        const code = response.status === 429 ? "RATE_LIMITED" : response.status === 401 ? "AUTH_REQUIRED" : response.status === 503 && (body as {code?:string})?.code !== "AI_NOT_CONFIGURED" ? "SECURITY_UNAVAILABLE" : body && typeof body === "object" && "code" in body && typeof body.code === "string" && Object.hasOwn(CLOSING_ERRORS, body.code) ? body.code as ClosingErrorCode : "CLOSING_FAILED";
+        const serverCode = body && typeof body === "object" && "code" in body ? body.code : undefined;
+        const code = response.status === 429 ? isAIUsageErrorCode(serverCode) ? serverCode : "RATE_LIMITED" : response.status === 401 ? "AUTH_REQUIRED" : response.status === 503 && serverCode !== "AI_NOT_CONFIGURED" ? "SECURITY_UNAVAILABLE" : typeof serverCode === "string" && Object.hasOwn(CLOSING_ERRORS, serverCode) ? serverCode as ClosingErrorCode : "CLOSING_FAILED";
         reportDevelopmentFailure(code, "SERVER_ERROR", stage, status);
         callbacks.failure(request.id, request.fingerprint, code);
       } else if (body && typeof body === "object" && "requestId" in body && body.requestId === request.id && "text" in body && validAIClosingText(body.text)) {

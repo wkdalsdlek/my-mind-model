@@ -9,6 +9,7 @@ import { getAuth, principal, type Principal } from '../lib/server/security/auth'
 import { authConfig, budgetConfig, checkOrigin, seoulPeriods, cost, SecurityError } from '../lib/server/security/policy';
 import { reserveUsage, requestDigest } from '../lib/server/security/usage';
 import { protectAI } from '../lib/server/security/api';
+import { consumeWindow } from '../lib/server/security/rate-limit';
 import { GET, POST } from '../app/api/auth/[...all]/route';
 import { POST as closing } from '../app/api/closing-message/route';
 import { POST as interpretation } from '../app/api/aurora-interpretation/route';
@@ -271,5 +272,40 @@ suite('Q10 larger cap cannot bypass real account/global money checks or modify i
   process.env.AI_GLOBAL_DAY_USD=day;const interpretationPermit=await reserveUsage(user,'interpretation',randomUUID());
   assert.equal(interpretationPermit.config.prices['gpt-6.1-sol'].maxInputTokens,120000);await interpretationPermit.finish(false);assert.equal(providerCalls,before);
  }finally{process.env.AI_GLOBAL_DAY_USD=day;if(old===undefined)delete process.env.AI_CLOSING_MAX_INPUT_BYTES;else process.env.AI_CLOSING_MAX_INPUT_BYTES=old;}
+});
+suite('approved Preview money/count settings permit an authenticated Q10 and interpretation with real ledger settlement',async()=>{
+ await clearUsage();const settings={AI_USER_MONTH_USD:'50',AI_GLOBAL_DAY_USD:'50',AI_GLOBAL_MONTH_USD:'200',AI_GLOBAL_DAY_REQUESTS:'100',AI_GLOBAL_MONTH_REQUESTS:'1000',AI_CLOSING_MAX_INPUT_BYTES:'120000',AI_INTERPRETATION_MAX_INPUT_BYTES:'120000'};
+ const saved=Object.fromEntries(Object.keys(settings).map(k=>[k,process.env[k]]));Object.assign(process.env,settings);
+ try{
+  const before=providerCalls;
+  for(const feature of ['closing','interpretation'] as const){
+   const route=protectAI(feature,async(_req,p)=>{await p.run({model:feature==='closing'?'gpt-4o-mini':'gpt-6.1-sol',max_completion_tokens:feature==='closing'?180:25000},async()=>{providerCalls++;return {usage:{prompt_tokens:2000,completion_tokens:100}};});return Response.json({ok:true});});
+   assert.equal((await route(json('/api/'+feature,{},cookies.tester))).status,200);
+  }
+  const rows=(await securityPool().query('SELECT feature,state,attempts,reserved_usd,charged_usd,price_snapshot FROM ai_request ORDER BY created_at')).rows;
+  assert.deepEqual(rows.map(r=>r.feature),['closing','interpretation']);assert.equal(providerCalls,before+2);
+  assert.ok(rows.every(r=>r.state==='success'&&r.attempts===1&&r.price_snapshot.maxInputTokens===120000));
+  assert.equal(Number(rows[0].reserved_usd),.018108);assert.equal(Number(rows[1].reserved_usd),.98);
+  assert.ok(Math.abs(rows.reduce((sum,r)=>sum+Number(r.charged_usd),0)-.00536)<1e-8);
+ }finally{for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v;}}
+});
+suite('real account override still blocks $50 environment before SDK and logs only its effective cause',async()=>{
+ await clearUsage();const saved={month:process.env.AI_USER_MONTH_USD,cap:process.env.AI_INTERPRETATION_MAX_INPUT_BYTES};process.env.AI_USER_MONTH_USD='50';process.env.AI_INTERPRETATION_MAX_INPUT_BYTES='120000';
+ const oldLog=console.error,logs:unknown[][]=[];console.error=(...args:unknown[])=>{logs.push(args);};
+ try{
+  await securityPool().query('UPDATE "user" SET "monthlyBudget"=.5 WHERE id=$1',[user.id]);const before=providerCalls;
+  await assert.rejects(reserveUsage(user,'interpretation',randomUUID()),(e:unknown)=>e instanceof SecurityError&&e.code==='AI_BUDGET_LIMIT');
+  const entry=logs.find(l=>l[0]==='[private-beta-usage-limit]')?.[1] as {reasons:string[];userBudgetSource:string;userMonthLimitUsd:number};
+  assert.deepEqual(entry.reasons,['USER_MONTH_USD']);assert.equal(entry.userBudgetSource,'account');assert.equal(entry.userMonthLimitUsd,.5);
+  assert.equal(providerCalls,before);assert.equal((await securityPool().query('SELECT count(*)::int AS n FROM ai_request')).rows[0].n,0);
+  assert.ok(!JSON.stringify(logs).includes(user.id));
+ }finally{console.error=oldLog;process.env.AI_USER_MONTH_USD=saved.month;if(saved.cap===undefined)delete process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;else process.env.AI_INTERPRETATION_MAX_INPUT_BYTES=saved.cap;}
+});
+suite('larger daily/monthly settings do not remove durable 20-user/100-global minute windows',async()=>{
+ await clearUsage();
+ for(let i=0;i<20;i++)await consumeWindow([['ai-policy-user',20]],'REQUEST_RATE_LIMIT');
+ await assert.rejects(consumeWindow([['ai-policy-user',20]],'REQUEST_RATE_LIMIT'),(e:unknown)=>e instanceof SecurityError&&e.code==='REQUEST_RATE_LIMIT');
+ for(let i=0;i<100;i++)await consumeWindow([['ai-policy-global',100]],'REQUEST_RATE_LIMIT');
+ await assert.rejects(consumeWindow([['ai-policy-global',100]],'REQUEST_RATE_LIMIT'),(e:unknown)=>e instanceof SecurityError&&e.code==='REQUEST_RATE_LIMIT');
 });
 suite('DB outage produces 503 and zero provider calls on all routes',async()=>{await securityPool().end();const before=providerCalls;for(const route of [closing,interpretation,analyze])assert.equal((await route(json('/api/x',{},cookies.tester))).status,503);assert.equal(providerCalls,before);});

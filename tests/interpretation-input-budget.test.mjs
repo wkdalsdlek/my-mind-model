@@ -204,7 +204,7 @@ test("insufficient user/global money returns HTTP 429 before handler or provider
       method: "POST", headers: { origin: "https://preview.example.invalid", "content-type": "application/json" }, body: "{}",
     }));
     assert.equal(response.status, 429); assert.equal((await response.json()).code, "AI_BUDGET_LIMIT");
-    assert.equal(response.headers.get("retry-after"), "60"); assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("retry-after"), null); assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(handlerCalls, 0); assert.equal(h.state.calls, 0); assert.equal(h.state.rows.length, 0);
     process.env[key] = old;
   }

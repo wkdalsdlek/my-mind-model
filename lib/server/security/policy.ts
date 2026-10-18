@@ -1,12 +1,22 @@
+import { AI_USAGE_MESSAGES, isAIUsageErrorCode } from "../../ai-usage-errors";
 /** Fail closed: every value comes from server-owned configuration, never Host. */
 export type Feature = "closing" | "interpretation" | "analyze";
 export class SecurityError extends Error {
-  constructor(readonly code: string, readonly status = 503) { super(code); }
+  constructor(readonly code: string, readonly status = 503, readonly retryAfterSeconds?: number) { super(code); }
 }
 export const securityFailure = (e: unknown) => Response.json({ code: e instanceof SecurityError ? e.code : "SECURITY_UNAVAILABLE",
   error: e instanceof SecurityError && e.status === 401 ? "로그인이 필요합니다." : e instanceof SecurityError && e.status === 429
-    ? "사용 한도에 도달했거나 요청이 진행 중입니다. 잠시 후 다시 시도해 주세요. 답변은 유지됩니다." : "접근 권한 또는 서비스 설정을 확인해 주세요. 답변은 유지됩니다." },
-  { status: e instanceof SecurityError ? e.status : 503, headers: { "Cache-Control": "no-store", ...(e instanceof SecurityError && e.status === 429 ? { "Retry-After": "60" } : {}) } });
+    ? `${isAIUsageErrorCode(e.code) ? AI_USAGE_MESSAGES[e.code] : "사용 한도에 도달했어요. 잠시 후 다시 시도해 주세요."} 답변은 유지됩니다.` : "접근 권한 또는 서비스 설정을 확인해 주세요. 답변은 유지됩니다." },
+  { status: e instanceof SecurityError ? e.status : 503, headers: { "Cache-Control": "no-store", ...(e instanceof SecurityError && e.status === 429
+    && (e.retryAfterSeconds !== undefined || !["AI_BUDGET_LIMIT", "GLOBAL_REQUEST_LIMIT", "USER_DAILY_LIMIT"].includes(e.code))
+    ? { "Retry-After": String(e.retryAfterSeconds ?? 60) } : {}) } });
+/** Seconds to the next Korean calendar boundary, using the transaction clock. */
+export function periodRetrySeconds(now: Date, month = false): number {
+  const shifted = new Date(now.getTime() + 9 * 3600000);
+  const boundary = month ? Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 1)
+    : Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate() + 1);
+  return Math.max(1, Math.ceil((boundary - shifted.getTime()) / 1000));
+}
 export function authConfig(env: NodeJS.ProcessEnv = process.env) {
   const secret = env.BETTER_AUTH_SECRET, database = env.DATABASE_URL;
   if (!database || !secret || secret.length < 32) throw new SecurityError("AUTH_NOT_CONFIGURED");

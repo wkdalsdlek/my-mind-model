@@ -1,3 +1,4 @@
+import {loadReadingUI} from "./helpers/load-reading-ui.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -288,7 +289,7 @@ const source = readFileSync(new URL("../components/result/AuroraResultScreen.tsx
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
   jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } });
 const exports = {};
-const externals = {
+const externals = { "./AuroraReading": loadReadingUI(),
   react: React, "react/jsx-runtime": nodeRequire("react/jsx-runtime"),
   "@/components/aurora/GlassNebulaAurora": props => { rendererProps = props; return React.createElement("div", { "data-aurora-test": true }); },
   "@/components/aurora/useAuroraBrowserSignals": { useAuroraBrowserSignals: () => ({ reduced: false }) },
@@ -303,7 +304,7 @@ test("real result JSX forwards only 5-A appearance and camera/quality props, not
   assert.deepEqual(rendererProps.appearance, snapshot(state).personalization.appearance);
   assert.equal(rendererProps.quality, "balanced"); assert.equal(rendererProps.cameraMode, "front");
   for (const key of ["title", "colors", "speed", "distort", "atmosphere", "innerPulse", "releaseFragments", "outerExpansion"]) assert.equal(Object.hasOwn(rendererProps, key), false);
-  assert.ok(html.includes("조용히 이어지는 나의 빛"));
+  assert.ok(html.includes(snapshot(state).personalization.approvedTitle.text));assert.ok(!html.includes("조용히 이어지는 나의 빛"));
   assert.equal(snapshot(state).personalization.approvedTitle.text, title);
   assert.equal(html.includes("날씨:"), false); assert.equal(html.includes("레거시"), false);
   for (const label of ["정면 감상", "자유 탐색", "느린 자동 공전", "정면으로 돌아오기", "다시 성찰하기", "나의 오로라 읽기"]) assert.ok(html.includes(label));

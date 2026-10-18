@@ -1,0 +1,34 @@
+.intro { position: fixed; inset: 0; z-index: 20; overflow-y: auto; background: radial-gradient(ellipse at 65% 70%, #1b1b382e, transparent 60%), #040610; color: #e4e7f1; transition: opacity 1.5s, filter 1.5s; }
+.intro[data-leaving="true"] { opacity: 0; filter: blur(10px); pointer-events: none; }
+.introContent { position: relative; margin: auto; width: min(700px, 100%); min-height: 100svh; display: flex; flex-direction: column; justify-content: center; padding: 90px 28px 100px; }
+.sentence { text-align: center; font-size: clamp(19px, 2.7vw, 26px); line-height: 1.9; letter-spacing: .03em; color: #cfd5ec; text-wrap: balance; animation: appear 3s ease both; text-shadow: 0 0 30px #a8b8f333; }
+.introForm { margin-top: 32px; animation: appear 3s 1.2s ease both; }
+.intro h1 { font-size: clamp(22px, 3.5vw, 31px); font-weight: 400; text-align: center; margin-bottom: 20px; }
+.introForm > p:not(.count) { color: #aab2cb; line-height: 1.9; font-size: 14px; text-align: center; margin-bottom: 20px; }
+.intro textarea, .editor textarea { width: 100%; padding: 16px 18px; border: 1px solid #adb3e43d; border-radius: 16px; color: #e4e9f3; background: #1115268a; line-height: 1.85; font-size: 16px; resize: vertical; min-height: 112px; }
+.count { color: #a0abc7; font-size: 12px; text-align: right; margin: 9px 0; }
+.examples { color: #a5afc8; font-size: 12px; margin-top: 10px; }
+.examples summary { cursor: pointer; min-height: 44px; padding: 12px 0; }
+.examples > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.examples button { color: #bfc7de; background: #111626; border: 1px solid #7783b733; border-radius: 16px; padding: 10px 12px; min-height: 44px; text-align: left; font-size: 12px; cursor: pointer; }
+.start { display: block; margin: 30px auto 0; min-height: 50px; padding: 14px 28px; border-radius: 30px; background: #1e2b42a6; border: 1px solid #b9dae367; color: #e6f2f6; cursor: pointer; box-shadow: 0 0 35px #a6cbe419; font-size: 15px; }
+.start:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.dust { position: fixed; inset: -5%; pointer-events: none; opacity: .4; background-image: radial-gradient(1px 1px at 13% 29%, #cbd7fb 80%, transparent), radial-gradient(1px 1px at 79% 12%, #adb7da 80%, transparent), radial-gradient(1px 1px at 65% 64%, #cbd7fb 80%, transparent), radial-gradient(1px 1px at 42% 87%, #adb7da 80%, transparent); background-size: 307px 293px; animation: drift 45s ease-in-out infinite alternate; }
+.sound { position: fixed; right: max(106px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 25; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 230px; }
+.sound button { min-height: 44px; padding: 8px 14px; background: #080d23b3; color: #aebed6; border: 1px solid #aac4dd26; border-radius: 24px; font-size: 11px; cursor: pointer; }
+.sound span { color: #b1bfd4; background: #080d23dd; font-size: 10px; padding: 6px 10px; border-radius: 12px; }
+.contextButton { position: fixed; right: 16px; top: 12px; z-index: 12; border: 1px solid #a9b4d929; border-radius: 22px; color: #b6c6de; background: #080d23bb; padding: 10px 13px; min-height: 44px; font-size: 11px; cursor: pointer; }
+.editor { color: #e0e8f3; background: #0a1022f5; border: 1px solid #c0dded55; border-radius: 22px; width: min(580px, calc(100% - 32px)); max-height: 85dvh; overflow: auto; padding: 28px; }
+.editor::backdrop { background: #020510c9; backdrop-filter: blur(6px); }
+.editor p { color: #b3bfd7; font-size: 13px; line-height: 1.9; margin: 14px 0; }
+.editor label { display: block; font-size: 13px; margin: 18px 0 10px; }
+.editor button { min-height: 44px; padding: 10px 18px; border: 1px solid #a9c8dc44; border-radius: 24px; background: #14213b; color: #dcebf4; cursor: pointer; margin-right: 12px; }
+.editor button:disabled { opacity: .4; }
+.intro :is(button, textarea, summary):focus-visible, .editor :is(button, textarea):focus-visible, .sound button:focus-visible, .contextButton:focus-visible { outline: 2px solid #c3e9f2; outline-offset: 4px; }
+.srOnly { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+@keyframes appear { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes drift { to { transform: translate(2%, -2%); } }
+@media (max-width: 600px) { .introContent { padding: 75px 22px 100px; justify-content: flex-start; } .introForm { margin-top: 24px; } .contextButton { right: 10px; top: 7px; } }
+@media (prefers-reduced-motion: reduce) { .sentence, .introForm, .dust { animation: none; } .intro { transition: opacity .1s; } }
+/* The full-screen mobile reader owns its top-right close control. */
+:global(body):has(:global(main)[data-reading="true"]) .contextButton { visibility: hidden; }

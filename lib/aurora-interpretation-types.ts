@@ -8,7 +8,9 @@ import type { AuroraSelectionTrace } from "./aurora-personalization-types";
 
 /** No appearance, weights, prompt, model, quote content, or computed meaning accepted from clients. */
 export interface AuroraInterpretationRequest {
-  version: "aurora-interpretation-request-v1";
+  version: "aurora-interpretation-request-v1" | "aurora-interpretation-request-v2";
+  /** Required for v2, forbidden for v1 by boundary validation. */
+  situation?: string;
   closingInput: ClosingMessageInput;
   approval: ApprovedClosingMessage;
   quality: AuroraQuality;
@@ -51,29 +53,42 @@ export interface AuroraInterpretationBinding {
   catalogVersion: "philosophy-quotes-v1";
 }
 export interface AuroraInterpretationContext {
+  situation?: { ref: "situation:intro"; rawText: string };
   binding: AuroraInterpretationBinding;
   approvedClosing: { text: string; source: ApprovedClosingMessage["source"] };
   facts: AuroraInterpretationFacts;
 }
 export interface GroundedAuroraText {
   origin: "ai-interpretation" | "deterministic-insufficient-evidence";
+  /** Contextual reference, never a core meaning contribution. Required in v2. */
+  contextRefs?: readonly "situation:intro"[];
   text: string;
   evidenceRefs: readonly string[];
   basis: "answer-grounded" | "insufficient-evidence";
 }
 /** Text is AI interpretation; citations, names, quotes, IDs, colors and parameters are server facts. */
 export interface AuroraInterpretationResult extends AuroraInterpretationContext {
-  version: "aurora-interpretation-v1";
+  version: "aurora-interpretation-v1" | "aurora-interpretation-v2";
   generated: {
     origin: "ai-interpretation";
     auroraName: string;
     philosophy: { line: VerifiedPhilosophyQuote | InspiredPhilosophyLine; reason: readonly string[]; q10Anchor: string };
     overall: GroundedAuroraText;
+    report?: Record<AuroraReportSection, GroundedAuroraText>;
     ribbons: readonly {
       ribbonId: AuroraRibbonMeaning["ribbonId"];
       psychological: GroundedAuroraText;
       philosophical: GroundedAuroraText;
+      currentMind?: GroundedAuroraText;
+      reportSummary?: GroundedAuroraText;
       reflectionQuestion: string;
     }[];
   };
 }
+
+export const AURORA_REPORT_SECTIONS = ["interplay", "present", "direction", "relationships", "selfCare", "letter"] as const;
+export type AuroraReportSection = typeof AURORA_REPORT_SECTIONS[number];
+export const AURORA_REPORT_HEADINGS: Record<AuroraReportSection, string> = {
+  interplay: "여러 리본이 함께 보여주는 당신", present: "현재의 마음에 대한 이해", direction: "앞으로의 삶을 위한 방향",
+  relationships: "인간관계에 대한 조언", selfCare: "마음을 돌보는 방법", letter: "당신에게 전하는 편지",
+};

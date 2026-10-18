@@ -1,3 +1,4 @@
+import { validJourneySituation, SITUATION_REF } from "./journey-context";
 import { buildClosingMessageInput, validateClosingMessageInput, validFinalClosingText, type ApprovedClosingMessage } from "./closing-message";
 import { createQuestionnaireState, firstIncompleteQuestion, getApprovedClosingMessage, type QuestionnaireState } from "./questionnaire-state";
 import { createCustomKeyword, createSelectedCapsule, createKeywordPools, type SelectedCapsule } from "./capsules";
@@ -19,16 +20,18 @@ const role = (id: string): AuroraInterpretationEvidence["role"] => coreIds.inclu
   : id === "q7" ? "emotionalWish" : id === "q8" ? "releaseTarget" : id === "q9" ? "futureAspiration" : "closingMessage";
 
 /** 5-C-3B can call this once at final generation, never from ribbon clicks. */
-export function buildAuroraInterpretationRequest(state: QuestionnaireState, quality: AuroraQuality = "balanced", flowMode: AuroraFlowMode = "hybrid"): AuroraInterpretationRequest {
+export function buildAuroraInterpretationRequest(state: QuestionnaireState, quality: AuroraQuality = "balanced", flowMode: AuroraFlowMode = "hybrid", situation?: string): AuroraInterpretationRequest {
   const approval = getApprovedClosingMessage(state);
   if (!approval || firstIncompleteQuestion(state) !== -1) throw new AuroraInterpretationError("APPROVAL_MISMATCH");
-  return structuredClone({ version: "aurora-interpretation-request-v1", closingInput: buildClosingMessageInput(state, state.closing.authoredText, state.closing.authoredWord), approval, quality, flowMode });
+  if (situation !== undefined && !validJourneySituation(situation)) throw new AuroraInterpretationError("INVALID_INPUT");
+  return structuredClone({ version: situation === undefined ? "aurora-interpretation-request-v1" : "aurora-interpretation-request-v2", ...(situation === undefined ? {} : { situation }), closingInput: buildClosingMessageInput(state, state.closing.authoredText, state.closing.authoredWord), approval, quality, flowMode });
 }
 /** Rebuilds every computed fact from bounded actual selections. Fingerprints are
  * consistency checks, not signatures/authentication or a proof of a human click. */
 export async function prepareAuroraInterpretation(value: unknown): Promise<AuroraInterpretationContext> {
-  if (!isRecord(value) || !exactKeys(value, ["version", "closingInput", "approval", "quality", "flowMode"])
-    || value.version !== "aurora-interpretation-request-v1" || !["low", "balanced", "high"].includes(String(value.quality))
+  const v2 = isRecord(value) && value.version === "aurora-interpretation-request-v2";
+  if (!isRecord(value) || !exactKeys(value, ["version", "closingInput", "approval", "quality", "flowMode", ...(v2 ? ["situation"] : [])])
+    || (v2 ? !validJourneySituation(value.situation) : value.version !== "aurora-interpretation-request-v1") || !["low", "balanced", "high"].includes(String(value.quality))
     || !["independent", "hybrid", "loop-emphasis"].includes(String(value.flowMode))) throw new AuroraInterpretationError("INVALID_INPUT");
   const a = value.approval;
   if (!isRecord(a) || !exactKeys(a, ["text", "source", "approvedAt", "inputFingerprint"]) || typeof a.text !== "string" || !validFinalClosingText(a.text)
@@ -85,10 +88,10 @@ export async function prepareAuroraInterpretation(value: unknown): Promise<Auror
   if (ribbons.length !== map.activeRibbonCount || new Set(ribbons.map(r => r.ribbonId)).size !== ribbons.length) throw new AuroraInterpretationError("INVALID_INPUT");
   // Digest binds approval text AND exact raw selections to renderer options. Never
   // send the lossless closing fingerprint to the model or diagnostics.
-  const bindingInput = { version: value.version, closingInput: buildClosingMessageInput(state, input.authoredText, input.authoredWord), approval: { text: a.text, source: a.source }, quality, flowMode, catalogVersion: "philosophy-quotes-v1" };
+  const bindingInput = { version: value.version, ...(v2 ? { situation: value.situation } : {}), closingInput: buildClosingMessageInput(state, input.authoredText, input.authoredWord), approval: { text: a.text, source: a.source }, quality, flowMode, catalogVersion: "philosophy-quotes-v1" };
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(bindingInput)));
   const requestDigest = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, "0")).join("");
-  return structuredClone({ binding: { requestDigest, quality, flowMode, catalogVersion: "philosophy-quotes-v1" }, approvedClosing: { text: a.text, source: a.source as ApprovedClosingMessage["source"] },
+  return structuredClone({ ...(v2 ? { situation: { ref: SITUATION_REF, rawText: value.situation as string } } : {}), binding: { requestDigest, quality, flowMode, catalogVersion: "philosophy-quotes-v1" }, approvedClosing: { text: a.text, source: a.source as ApprovedClosingMessage["source"] },
     facts: { origin: "deterministic-engines", coreShares: p.coreShares, familyTrace: p.trace.families, repeatedTexts: p.trace.repeatedTexts,
       context: { atmosphere: p.atmosphere, innerPulse: p.innerPulse, releaseFragments: p.releaseFragments, outerExpansion: p.outerExpansion, rendererApplied: false },
       questions, unclassified: questions.slice(0, 9).flatMap(q => q.evidence.filter(e => e.mapping === "unclassified")), ribbons,

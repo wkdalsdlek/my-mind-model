@@ -12,10 +12,28 @@ import { ClosingMessageRequestController } from "@/lib/closing-message-client";
 import AuroraResultScreen from "@/components/result/AuroraResultScreen";
 import { prepareAuroraResult } from "@/lib/aurora-result";
 import { AuroraUniverseRequestController, auroraUniverseFailureMessage, type AuroraUniverseResult, type AuroraUniversePhase } from "@/lib/aurora-universe";
+import JourneyIntro, { SituationEditor } from "@/components/journey/JourneyIntro";
+import JourneySound, { type JourneySoundHandle } from "@/components/journey/JourneySound";
+import { validJourneySituation } from "@/lib/journey-context";
+import journeyStyles from "@/components/journey/JourneyIntro.module.css";
 import styles from "@/app/page.module.css";
 
 export default function MindJourney() {
   const [step, setStep] = useState(0);
+  const [journeyStage, setJourneyStage] = useState<"intro" | "entering" | "questions">("intro");
+  const [situation, setSituation] = useState("");
+  const [editingSituation, setEditingSituation] = useState(false);
+  const latestSituation = useRef(situation), introLock = useRef(false), sound = useRef<JourneySoundHandle>(null);
+  const introTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLayoutEffect(() => { latestSituation.current = situation; }, [situation]);
+  useEffect(() => () => { if (introTimer.current) clearTimeout(introTimer.current); }, []);
+  const beginJourney = () => {
+    if (introLock.current || !validJourneySituation(situation)) return;
+    introLock.current = true;
+    sound.current?.start();
+    setJourneyStage("entering");
+    introTimer.current = setTimeout(() => setJourneyStage("questions"), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 100 : 1500);
+  };
   const [questionnaire, dispatchQuestionnaire] = useReducer(questionnaireReducer, undefined, createQuestionnaireState);
   const { selections, responses } = questionnaire;
   const [keywordPools, setKeywordPools] = useState(createKeywordPools);
@@ -58,7 +76,8 @@ export default function MindJourney() {
   useEffect(() => () => analysisRequests.cancel(false), [analysisRequests]);
   const showResult = result !== null && result.snapshot.inputFingerprint === approvedClosingMessage?.inputFingerprint
     && result.snapshot.personalization.approvedTitle.text === approvedClosingMessage?.text
-    && result.snapshot.personalization.approvedTitle.source === approvedClosingMessage?.source;
+    && result.snapshot.personalization.approvedTitle.source === approvedClosingMessage?.source
+    && result.context.situation?.rawText === situation;
 
   const handleNext = () => {
     if (isAnalyzing || selections[step].length === 0) return;
@@ -92,18 +111,18 @@ export default function MindJourney() {
   };
 
   const handleAnalyze = () => {
-    if (isAnalyzing || analysisRequests.busy) return;
+    if (isAnalyzing || analysisRequests.busy || !validJourneySituation(situation)) return;
     const prepared = prepareAuroraResult(questionnaire);
     if (!prepared.ready) {
       setStep(prepared.step);
       if (prepared.failure) setAnalysisError(auroraUniverseFailureMessage("INVALID_INPUT"));
       return;
     }
-    const snapshot = prepared.snapshot;
+    const snapshot = prepared.snapshot, requestedSituation = situation;
     void analysisRequests.generate(questionnaire, {
       isCurrent: () => {
         const approval = getApprovedClosingMessage(latestQuestionnaire.current);
-        return approval?.inputFingerprint === snapshot.inputFingerprint && approval.text === snapshot.personalization.approvedTitle.text
+        return latestSituation.current === requestedSituation && approval?.inputFingerprint === snapshot.inputFingerprint && approval.text === snapshot.personalization.approvedTitle.text
           && approval.source === snapshot.personalization.approvedTitle.source && firstIncompleteQuestion(latestQuestionnaire.current) === -1;
       },
       start: () => { setIsAnalyzing(true); setAnalysisError(""); },
@@ -111,7 +130,7 @@ export default function MindJourney() {
       success: completed => setResult(completed),
       failure: code => setAnalysisError(auroraUniverseFailureMessage(code)),
       settled: () => setIsAnalyzing(false),
-    });
+    }, "balanced", "hybrid", requestedSituation);
   };
 
   const handleReset = () => {
@@ -119,12 +138,21 @@ export default function MindJourney() {
       analysisRequests.cancel(); closingRequests.cancel();
       setStep(0); dispatchQuestionnaire({ type: "reset" }); setKeywordPools(createKeywordPools());
       setResult(null); setIsAnalyzing(false); setAnalysisError("");
+      latestSituation.current = ""; setSituation(""); setJourneyStage("intro"); introLock.current = false;
     }
   };
 
+  const saveSituation = (text: string) => {
+    if (!validJourneySituation(text)) return;
+    if (text !== situation) {
+      latestSituation.current = text; analysisRequests.cancel(); setSituation(text);
+      setResult(null); setAnalysisError("");
+      if (showResult) setStep(9);
+    }
+    setEditingSituation(false);
+  };
   // Generate only the new interpretation; preserve legacy analyze for compatibility.
-  if (!showResult || !result) {
-    return (
+  const content = !showResult || !result ? (
       <QuestionAtmosphere step={step}>
         <CapsuleQuestionnaire
           key={step}
@@ -159,10 +187,14 @@ export default function MindJourney() {
               <button type="button" onClick={() => setAnalysisError("")}>닫기</button></>}
         </aside>}
       </QuestionAtmosphere>
-    );
-  }
-
-  return <AuroraResultScreen result={result} onReset={handleReset} busy={isAnalyzing} requestError={analysisError}
+    ) : <AuroraResultScreen result={result} onReset={handleReset} busy={isAnalyzing} requestError={analysisError}
     onRetryInterpretation={handleAnalyze} onCancelInterpretation={() => analysisRequests.cancel()}
     onReviewClosing={() => { analysisRequests.cancel(); setResult(null); setAnalysisError(""); setStep(9); }} />;
+  return <>
+    <JourneySound ref={sound} />
+    {journeyStage !== "intro" && <div inert={journeyStage !== "questions"}>{content}</div>}
+    {journeyStage !== "questions" && <JourneyIntro value={situation} onChange={setSituation} onStart={beginJourney} leaving={journeyStage === "entering"} />}
+    {journeyStage === "questions" && <button type="button" className={journeyStyles.contextButton} onClick={() => setEditingSituation(true)}>지금의 이야기 수정</button>}
+    {editingSituation && <SituationEditor value={situation} onSave={saveSituation} onClose={() => setEditingSituation(false)} />}
+  </>;
 }

@@ -76,7 +76,7 @@ export class AuroraUniverseRequestController {
     token.controller.abort();
     if (notify) token.callbacks.settled();
   }
-  async generate(state: QuestionnaireState, callbacks: UniverseCallbacks, quality: AuroraQuality = "balanced", flowMode: AuroraFlowMode = "hybrid"): Promise<void> {
+  async generate(state: QuestionnaireState, callbacks: UniverseCallbacks, quality: AuroraQuality = "balanced", flowMode: AuroraFlowMode = "hybrid", situation?: string): Promise<void> {
     if (this.active || !callbacks.isCurrent()) return;
     const prepared = prepareAuroraResult(state);
     if (!prepared.ready) { callbacks.failure("APPROVAL_MISMATCH"); return; }
@@ -87,7 +87,7 @@ export class AuroraUniverseRequestController {
     try {
       callbacks.start(); callbacks.phase?.("preparing");
       token.timer = setTimeout(() => { token.timedOut = true; token.controller.abort(); }, this.timeoutMs);
-      const payload = buildAuroraInterpretationRequest(state, quality, flowMode);
+      const payload = buildAuroraInterpretationRequest(state, quality, flowMode, situation);
       const context = await abortable(prepareAuroraInterpretation(payload), token.controller.signal);
       if (!current()) return;
       stage = "requesting"; callbacks.phase?.(stage);

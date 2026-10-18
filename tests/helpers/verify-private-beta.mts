@@ -27,13 +27,11 @@ const mock=createServer(async(req,res)=>{
   const body=JSON.parse(raw),kind=body.response_format?.json_schema?.name;let content;
   if(kind==='closing_message'){provider.closing++;content=JSON.stringify({text:sentence});}
   else if(kind==='question_analysis'){provider.legacy++;content=JSON.stringify({analyses:Object.fromEntries(Array.from({length:10},(_,i)=>{const questionId=`q${i+1}`;return[questionId,{questionId,analysis:'실제 답변을 돌아보는 합성 분석입니다.',detailedAnalysis:'선택한 표현을 성찰하는 합성 분석입니다.'}];}))});}
-  else{
+  else {
    assert.equal(kind,'aurora_interpretation');provider.interpretation++;
-   const input=JSON.parse(body.messages.at(-1).content),anchor=input.approvedClosing.text.slice(0,12);
-   const grounded=(refs:string[])=>({text:'실제 선택에서 함께 살펴보고 싶은 가치의 가능성을 돌아볼 수 있습니다.',basis:refs.length?'answer-grounded':'insufficient-evidence',evidenceRefs:refs});
-   content=JSON.stringify({auroraName:'나의 시간을 잇는 빛',quoteId:'seneca-letters-1-1-self',q10Anchor:anchor,quoteReason:[`승인한 문장의 ${anchor}라는 표현은 자신의 시간을 돌아보는 시선과 연결됩니다.`],
-    overall:{...grounded(input.questions.flatMap((q:{evidence:{ref:string}[]})=>q.evidence.map(e=>e.ref))),text:'선택한 표현에는 여러 가치를 함께 살피려는 가능성이 담겨 있습니다. 서로 다른 리본은 마음을 고정된 성격으로 정하지 않습니다. 현재의 분위기와 앞으로의 바람을 구분하며 돌아볼 수 있습니다. 승인한 문장은 자신의 시간을 어떻게 돌볼지 묻는 출발점입니다. 이 해석은 정답이 아니라 성찰을 위한 하나의 시선입니다.'},
-    ribbons:Object.fromEntries(input.ribbons.map((r:{ribbonId:string;evidenceRefs:string[]},i:number)=>[r.ribbonId,{ribbonId:r.ribbonId,psychological:grounded(r.evidenceRefs),philosophical:{...grounded(r.evidenceRefs),text:`${i+1}번째 빛의 가치를 일상에서 어떤 태도로 이어갈지 돌아볼 수 있습니다.`},reflectionQuestion:`이 ${i+1}번째 빛을 오늘 어떻게 돌보고 싶나요?`}]))});
+   const input=JSON.parse(body.messages.at(-1).content);
+   const {universeModelResponse}=await import('./aurora-universe-fixture.mjs');
+   content=JSON.stringify(universeModelResponse({approvedClosing:input.approvedClosing,situation:input.situation,facts:{questions:input.questions,ribbons:input.ribbons.map((r:{ribbonId:string;name:string;evidenceRefs:string[]})=>({...r,evidence:r.evidenceRefs.map(ref=>({ref}))}))}}));
   }
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:'local-synthetic',object:'chat.completion',created:1,model:body.model,choices:[{index:0,message:{role:'assistant',content,refusal:null},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:100,total_tokens:200,completion_tokens_details:{reasoning_tokens:10},prompt_tokens_details:{cached_tokens:5}}}));
  }catch{res.writeHead(500);res.end('{}');}
@@ -71,15 +69,16 @@ try{
  await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
  report.stage='login';await page.goto(origin);assert.ok(page.url().endsWith('/login'));
  await page.locator('input[name="email"]').fill(email);await page.locator('input[name="password"]').fill(password);await page.getByRole('button',{name:'입장하기',exact:true}).click();await page.waitForURL(origin+'/');
- await page.reload();await page.getByRole('button',{name:/ 캡슐 추가$/}).first().waitFor();report.sessionPersists=true;
+ await page.reload();await page.locator('#journey-situation').fill('새로운 시작을 앞두고 있는 직장인');await page.getByRole('button',{name:'나의 마음 들여다보기',exact:true}).click();await page.locator('#journey-intro-title').waitFor({state:'detached'});await page.getByRole('button',{name:/ 캡슐 추가$/}).first().waitFor();report.sessionPersists=true;
  if(!authOnly){
  report.stage='questionnaire';for(let i=0;i<9;i++){await page.getByRole('button',{name:/ 캡슐 추가$/}).first().click({force:true});await page.getByRole('button',{name:'다음 질문 →',exact:true}).click();}
  await page.locator('#closing-message').fill(sentence);const closingResponse=page.waitForResponse(r=>r.url().endsWith('/api/closing-message')&&r.request().method()==='POST');await page.getByRole('button',{name:'나의 문장 만들기',exact:true}).click();assert.equal((await closingResponse).status(),200);
  await page.getByRole('button',{name:'이 문장으로 결정하기',exact:true}).click();const analysisResponse=page.waitForResponse(r=>r.url().endsWith('/api/aurora-interpretation')&&r.request().method()==='POST');await page.getByRole('button',{name:'오로라 만나기 ✦',exact:true}).click();assert.equal((await analysisResponse).status(),200);
- await page.locator('#aurora-result-title').waitFor();assert.equal(await page.locator('blockquote').count(),1);report.resultEntered=true;
+ await page.locator('#aurora-result-title').waitFor();assert.equal(await page.locator('blockquote').count(),0);report.resultEntered=true;
  const details=page.locator('details').filter({has:page.locator('#result-quality')});await details.evaluate((n:HTMLDetailsElement)=>n.open=true);await page.locator('#result-quality').selectOption('low');await details.evaluate((n:HTMLDetailsElement)=>n.open=false);
  await page.getByRole('group',{name:'리본 빛 선택점'}).locator('button').first().waitFor();await page.screenshot({path:resolve(output,'authenticated-universe.png')});
  await page.getByRole('button',{name:'나의 오로라 읽기',exact:true}).click();assert.equal(await page.getByRole('dialog').count(),1);await page.keyboard.press('Escape');
+ await page.getByText('리본 탐색',{exact:true}).first().click();
  const first=page.getByRole('group',{name:'리본 탐색'}).locator('button').first();await first.click();await page.waitForFunction(()=>document.querySelector('#ribbon-focus-status')?.getAttribute('data-focus-phase')==='focused');
  await page.screenshot({path:resolve(output,'authenticated-macro.png')});await page.getByRole('button',{name:'전체 오로라로 돌아가기',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#ribbon-focus-status')?.getAttribute('data-focus-phase')==='overview');
  assert.equal(analysisCalls,1);report.navigationNoExtraAI=true;report.macroAndReturn=true;

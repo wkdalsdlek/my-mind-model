@@ -195,4 +195,52 @@ suite('failed locked transaction rolls back writes and releases the guard',async
  assert.equal((await securityPool().query('SELECT "closingDaily" FROM "user" WHERE id=$1',[ids.tester])).rows[0].closingDaily,before);
  await locked(async db=>{assert.equal((await db.query('SELECT id FROM beta_guard')).rowCount,1);});
 });
+suite('120KB Preview cap persists matching reservation and token bounds for 60/90/110/120KB inputs',async()=>{
+ await clearUsage();const previous=process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;process.env.AI_INTERPRETATION_MAX_INPUT_BYTES='120000';
+ try{
+  await securityPool().query('UPDATE "user" SET "interpretationDaily"=10,"monthlyBudget"=25 WHERE id=$1',[user.id]);
+  for(const size of [60000,90000,110000,120000,120001]){
+   const p=await reserveUsage(user,'interpretation',randomUUID());
+   const params={model:'gpt-6.1-sol',max_completion_tokens:25000,messages:[{role:'user',content:'합성 🌌'}]};
+   params.messages[0].content+='x'.repeat(size-Buffer.byteLength(JSON.stringify(params),'utf8')-4096);
+   assert.equal(Buffer.byteLength(JSON.stringify(params),'utf8')+4096,size);
+   const before=providerCalls;
+   const call=async()=>{providerCalls++;return{usage:{prompt_tokens:size,completion_tokens:1000}};};
+   if(size>120000){await assert.rejects(p.run(params,call),(e:unknown)=>e instanceof SecurityError&&e.code==='MODEL_BUDGET_MISMATCH');await p.finish(false);assert.equal(providerCalls,before);}
+   else{await p.run(params,call);await p.finish(true);assert.equal(providerCalls,before+1);}
+   const row=(await securityPool().query('SELECT price_snapshot,reserved_usd,charged_usd,attempts FROM ai_request WHERE id=$1',[p.id])).rows[0];
+   assert.equal(row.price_snapshot.maxInputTokens,120000);
+   assert.equal(Number(row.reserved_usd),Math.ceil(2*cost(p.config.prices['gpt-6.1-sol'],120000,25000)*1e8)/1e8);
+   assert.equal(row.attempts,size>120000?0:1);
+   assert.ok(Math.abs(Number(row.charged_usd)-(size>120000?0:cost(p.config.prices['gpt-6.1-sol'],size,1000)))<1e-8);
+  }
+ }finally{if(previous===undefined)delete process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;else process.env.AI_INTERPRETATION_MAX_INPUT_BYTES=previous;}
+});
+suite('120KB concurrent reservations cannot spend the same final global slot',async()=>{
+ await clearUsage();const cap=process.env.AI_INTERPRETATION_MAX_INPUT_BYTES,day=process.env.AI_GLOBAL_DAY_USD;
+ process.env.AI_INTERPRETATION_MAX_INPUT_BYTES='120000';process.env.AI_GLOBAL_DAY_USD='.98';
+ try{
+  const owner=await principal(new Headers({cookie:cookies.owner})),before=providerCalls;
+  const results=await Promise.allSettled([reserveUsage(user,'interpretation',randomUUID()),reserveUsage(owner,'interpretation',randomUUID())]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const rejected=results.find(r=>r.status==='rejected');assert.ok(rejected&&rejected.reason instanceof SecurityError);assert.equal(rejected.reason.code,'AI_BUDGET_LIMIT');
+  assert.equal(providerCalls,before);
+  for(const result of results)if(result.status==='fulfilled')await result.value.finish(false);
+ }finally{process.env.AI_GLOBAL_DAY_USD=day;if(cap===undefined)delete process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;else process.env.AI_INTERPRETATION_MAX_INPUT_BYTES=cap;}
+});
+suite('test-only account can admit ten interpretations with $25 override while Q10 limits remain unchanged',async()=>{
+ await clearUsage();const cap=process.env.AI_INTERPRETATION_MAX_INPUT_BYTES,monthly=process.env.AI_USER_MONTH_USD;
+ process.env.AI_INTERPRETATION_MAX_INPUT_BYTES='120000';process.env.AI_USER_MONTH_USD='.01';
+ try{
+  await securityPool().query('UPDATE "user" SET "interpretationDaily"=10,"monthlyBudget"=25 WHERE id=$1',[user.id]);
+  const periods=seoulPeriods((await securityPool().query('SELECT now() AS time')).rows[0].time);
+  for(let i=0;i<9;i++)await securityPool().query("INSERT INTO ai_request(id,user_id,feature,digest,day,month,state,attempts,reserved_usd,charged_usd,expires_at) VALUES($1,$2,'interpretation',$3,$4,$5,'success',1,.01,.01,now())",[randomUUID(),user.id,randomUUID(),periods.day,periods.month]);
+  const tenth=await reserveUsage(user,'interpretation',randomUUID());
+  await tenth.run({model:'gpt-6.1-sol',max_completion_tokens:25000},complete);await tenth.finish(true);
+  await assert.rejects(reserveUsage(user,'interpretation',randomUUID()),(e:unknown)=>e instanceof SecurityError&&e.code==='USER_DAILY_LIMIT');
+  const q10=await reserveUsage(user,'closing',randomUUID());await q10.finish(false);
+  const account=(await securityPool().query('SELECT "closingDaily","interpretationDaily","analyzeDaily","monthlyBudget" FROM "user" WHERE id=$1',[user.id])).rows[0];
+  assert.equal(account.closingDaily,5);assert.equal(account.interpretationDaily,10);assert.equal(account.analyzeDaily,3);assert.equal(Number(account.monthlyBudget),25);
+ }finally{process.env.AI_USER_MONTH_USD=monthly;if(cap===undefined)delete process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;else process.env.AI_INTERPRETATION_MAX_INPUT_BYTES=cap;}
+});
 suite('DB outage produces 503 and zero provider calls on all routes',async()=>{await securityPool().end();const before=providerCalls;for(const route of [closing,interpretation,analyze])assert.equal((await route(json('/api/x',{},cookies.tester))).status,503);assert.equal(providerCalls,before);});

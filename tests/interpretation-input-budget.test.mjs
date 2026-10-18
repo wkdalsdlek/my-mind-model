@@ -110,10 +110,10 @@ for (const environment of [undefined, "production", "development"]) test(`overri
   env[overrideKey] = "invalid";
   assert.deepEqual(featureBudgetConfig("interpretation", env), budgetConfig(env));
 });
-for (const limit of ["4096", "16000", "60000"]) test(`valid explicit cap ${limit} uses canonical integer bytes`, () => {
+for (const limit of ["4096", "16000", "60000", "60001", "90000", "110000", "120000"]) test(`valid explicit cap ${limit} uses canonical integer bytes`, () => {
   assert.equal(featureBudgetConfig("interpretation", { ...fixtureEnv(), [overrideKey]: limit }).prices["gpt-6.1-sol"].maxInputTokens, Number(limit));
 });
-for (const limit of ["", " ", "60000 ", "60000\n", "+60000", "060000", "6e4", "60000.0", "0", "-1", "4095", "60001", "NaN", "Infinity", "9007199254740992", "invalid"]) {
+for (const limit of ["", " ", "60000 ", "60000\n", "+60000", "060000", "6e4", "60000.0", "0", "-1", "4095", "120001", "120000 ", "0120000", "1.2e5", "NaN", "Infinity", "9007199254740992", "invalid"]) {
   test(`invalid Preview override (${JSON.stringify(limit)}) rejects before any DB/model work`, async () => {
     process.env[overrideKey] = limit;
     const h = harness(); await assert.rejects(h.reserve(), isError("BUDGET_NOT_CONFIGURED"));
@@ -263,4 +263,116 @@ for (const result of [{}, completion(60001), completion(100, 25001)]) test("unkn
 test("DB reservation failure remains fail-closed without provider calls", async () => {
   process.env[overrideKey] = "60000"; const error = new Error("synthetic database failure"), h = harness({ dbError: error });
   await assert.rejects(h.reserve(), e => e === error); assert.equal(h.state.calls, 0);
+});
+
+test("120000 only expands explicit Preview interpretation config without changing rates or defaults", () => {
+  const env = { ...fixtureEnv(), [overrideKey]: "120000" }, saved = JSON.stringify(env), base = budgetConfig(env);
+  const effective = featureBudgetConfig("interpretation", env);
+  assert.equal(effective.prices["gpt-6.1-sol"].maxInputTokens, 120000);
+  assert.deepEqual({ ...effective.prices["gpt-6.1-sol"], maxInputTokens: 16000 }, base.prices["gpt-6.1-sol"]);
+  for (const feature of ["closing", "analyze"]) assert.deepEqual(featureBudgetConfig(feature, env), base);
+  for (const VERCEL_ENV of ["production", "development", undefined])
+    assert.deepEqual(featureBudgetConfig("interpretation", { ...env, VERCEL_ENV }), base);
+  assert.equal(JSON.stringify(env), saved);
+});
+
+for (const bytes of [60000, 90000, 110000, 120000]) test(`120000 Preview cap accepts ${bytes} total UTF-8 bytes with matching reservation and usage validation`, async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve(), row = h.state.rows[0];
+  assert.equal(permit.config.prices["gpt-6.1-sol"].maxInputTokens, 120000);
+  assert.equal(row.price_snapshot.maxInputTokens, 120000); assert.equal(row.reserved_usd, .98);
+  await h.run(permit, paramsWithSize(bytes), completion(bytes)); await permit.finish(true);
+  assert.equal(h.state.calls, 1); assert.equal(h.state.attempts[0].state, "reported");
+  assert.equal(row.charged_usd, cost(permit.config.prices["gpt-6.1-sol"], bytes, 1000, 100));
+});
+
+for (const [reason, change, bytes] of [
+  ["MODEL_NAME_MISMATCH", p => { p.model = "synthetic-other-model"; }, 60000],
+  ["MAX_OUTPUT_TOKENS_MISMATCH", p => { p.max_completion_tokens = 180; }, 60000],
+  ["INPUT_BYTES_EXCEEDED", () => {}, 120001],
+]) test(`120000 cap still distinguishes ${reason} and settles a blocked request without charge`, async t => {
+  process.env[overrideKey] = "120000";
+  const entries = []; t.mock.method(console, "error", (...args) => entries.push(args));
+  const h = harness(), permit = await h.reserve(), params = paramsWithSize(bytes); change(params);
+  await assert.rejects(h.run(permit, params), isError("MODEL_BUDGET_MISMATCH"));
+  assert.equal(h.state.calls, 0); assert.equal(h.state.attempts.length, 0);
+  assert.equal(entries.length, 1); assert.deepEqual(entries[0][1].mismatchTypes, [reason]);
+  assert.equal(entries[0][1].inputBytesWithOverhead, measured(params)); assert.equal(entries[0][1].maxInputTokens, 120000);
+  assert.equal(JSON.stringify(entries).includes("synthetic-other-model"), false);
+  await permit.finish(false); assert.equal(h.state.rows[0].charged_usd, 0); assert.equal(h.state.rows[0].state, "no-model");
+});
+
+test("an unchanged explicit 60000 setting still refuses 90000 bytes rather than silently raising its limit", async () => {
+  process.env[overrideKey] = "60000";
+  const h = harness(), permit = await h.reserve();
+  await assert.rejects(h.run(permit, paramsWithSize(90000)), isError("MODEL_BUDGET_MISMATCH"));
+  assert.equal(h.state.calls, 0); assert.equal(h.state.rows[0].reserved_usd, .74);
+});
+
+test("120000 reservation covers two maximum reports and refuses a third model attempt", async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve(), params = paramsWithSize(120000);
+  const maximum = { usage: { prompt_tokens: 120000, completion_tokens: 25000 } };
+  await h.run(permit, params, maximum); await h.run(permit, params, maximum);
+  await assert.rejects(h.run(permit, params, maximum), isError("MODEL_NOT_AUTHORIZED"));
+  await permit.finish(true);
+  assert.equal(h.state.calls, 2); assert.equal(h.state.rows[0].reserved_usd, .98); assert.equal(h.state.rows[0].charged_usd, .98);
+});
+
+test("an oversized retry preserves the first reported cost without calling the provider twice", async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve();
+  await h.run(permit, paramsWithSize(110000), completion(110000));
+  const firstCost = h.state.attempts[0].estimated_usd;
+  await assert.rejects(h.run(permit, paramsWithSize(120001)), isError("MODEL_BUDGET_MISMATCH"));
+  await permit.finish(false);
+  assert.equal(h.state.calls, 1); assert.equal(h.state.attempts.length, 1);
+  assert.equal(h.state.rows[0].state, "failed"); assert.equal(h.state.rows[0].charged_usd, firstCost);
+  assert.ok(firstCost > 0 && firstCost < .98);
+});
+
+test("120000 permit retains its reserved cap when the setting changes before both attempts", async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve(); process.env[overrideKey] = "60000";
+  await h.run(permit, paramsWithSize(110000), completion(110000)); delete process.env[overrideKey];
+  await h.run(permit, paramsWithSize(110000), completion(110000)); await permit.finish(true);
+  assert.equal(h.state.calls, 2); assert.equal(permit.config.prices["gpt-6.1-sol"].maxInputTokens, 120000);
+  assert.equal(h.state.rows[0].reserved_usd, .98);
+});
+
+for (const result of [{}, completion(120001), completion(1000, 25001)]) test("unknown or over-120000 usage retains the .98 reservation", async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve(); await h.run(permit, paramsWithSize(110000), result); await permit.finish(true);
+  assert.equal(h.state.attempts[0].state, "uncertain"); assert.equal(h.state.rows[0].charged_usd, .98);
+});
+
+test("provider cancellation at the expanded cap never releases an uncertain .98 cost", async () => {
+  process.env[overrideKey] = "120000";
+  const h = harness(), permit = await h.reserve(), controller = new AbortController();
+  const pending = permit.run(paramsWithSize(110000), () => { h.state.calls++; controller.abort(); return new Promise(() => {}); }, controller.signal);
+  await assert.rejects(pending, isError("REQUEST_TIMEOUT")); await permit.finish(false);
+  assert.equal(h.state.calls, 1); assert.equal(h.state.attempts[0].state, "uncertain"); assert.equal(h.state.rows[0].charged_usd, .98);
+});
+
+for (const key of ["AI_USER_MONTH_USD", "AI_GLOBAL_DAY_USD", "AI_GLOBAL_MONTH_USD"]) test(`expanded .98 reservation is blocked by .97 remaining (${key})`, async () => {
+  process.env[overrideKey] = "120000"; process.env[key] = ".97";
+  const h = harness(); await assert.rejects(h.reserve(), isError("AI_BUDGET_LIMIT")); assert.equal(h.state.rows.length, 0);
+});
+
+for (const monthlyBudget of [20, 25, 30]) test(`existing account policy supports ten daily interpretations and $${monthlyBudget} monthly cap without changing Q10`, async () => {
+  process.env[overrideKey] = "120000";
+  const rows = Array.from({ length: 9 }, (_, i) => priorRow({ id: `prior-${i}`, user_id: user.id, feature: "interpretation", charged_usd: .98 }));
+  const account = { interpretationDaily: 10, monthlyBudget: String(monthlyBudget) };
+  const h = harness({ rows, user: account }), tenth = await h.reserve();
+  assert.equal(h.state.rows.at(-1).reserved_usd, .98);
+  await h.run(tenth, paramsWithSize(110000)); await tenth.finish(true);
+  await assert.rejects(h.reserve(), isError("USER_DAILY_LIMIT"));
+  // Nine earlier interpretations do not consume the distinct Q10 daily count.
+  const closing = await h.reserve("closing"); assert.equal(closing.config.prices["gpt-4o-mini"].maxInputTokens, 16000);
+});
+
+test("account monthly override does not bypass the shared global monthly budget", async () => {
+  process.env[overrideKey] = "120000"; process.env.AI_GLOBAL_MONTH_USD = ".97";
+  const h = harness({ user: { interpretationDaily: 10, monthlyBudget: "25" } });
+  await assert.rejects(h.reserve(), isError("AI_BUDGET_LIMIT")); assert.equal(h.state.rows.length, 0);
 });

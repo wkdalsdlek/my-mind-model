@@ -51,7 +51,7 @@ export function featureBudgetConfig(feature: Feature, env: NodeJS.ProcessEnv = p
   const raw = env.AI_INTERPRETATION_MAX_INPUT_BYTES;
   if (raw === undefined) return config;
   const limit = Number(raw);
-  if (!Number.isSafeInteger(limit) || String(limit) !== raw || limit < 4096 || limit > 60000) throw new SecurityError("BUDGET_NOT_CONFIGURED");
+  if (!Number.isSafeInteger(limit) || String(limit) !== raw || limit < 4096 || limit > 120000) throw new SecurityError("BUDGET_NOT_CONFIGURED");
   const { model } = featureModel(feature);
   return { ...config, prices: { ...config.prices, [model]: { ...config.prices[model], maxInputTokens: limit } } };
 }

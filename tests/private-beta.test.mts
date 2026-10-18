@@ -243,4 +243,33 @@ suite('test-only account can admit ten interpretations with $25 override while Q
   assert.equal(account.closingDaily,5);assert.equal(account.interpretationDaily,10);assert.equal(account.analyzeDaily,3);assert.equal(Number(account.monthlyBudget),25);
  }finally{process.env.AI_USER_MONTH_USD=monthly;if(cap===undefined)delete process.env.AI_INTERPRETATION_MAX_INPUT_BYTES;else process.env.AI_INTERPRETATION_MAX_INPUT_BYTES=cap;}
 });
+suite('Q10 Preview override reserves and settles the same 120KB bound; still only one model attempt',async()=>{
+ await clearUsage();const old=process.env.AI_CLOSING_MAX_INPUT_BYTES;process.env.AI_CLOSING_MAX_INPUT_BYTES='120000';
+ try{
+  for(const size of [16140,120000,120001]){
+   const p=await reserveUsage(user,'closing',randomUUID()),params={...syntheticParams,messages:[{role:'user',content:'합성 🌌'}]};
+   params.messages[0].content+='x'.repeat(size-Buffer.byteLength(JSON.stringify(params),'utf8')-4096);
+   const before=providerCalls;
+   const call=async()=>{providerCalls++;return{usage:{prompt_tokens:size,completion_tokens:180}};};
+   if(size>120000){await assert.rejects(p.run(params,call),(e:unknown)=>e instanceof SecurityError&&e.code==='MODEL_BUDGET_MISMATCH');await p.finish(false);assert.equal(providerCalls,before);}
+   else{await p.run(params,call);await assert.rejects(p.run(params,call),(e:unknown)=>e instanceof SecurityError&&e.code==='MODEL_NOT_AUTHORIZED');await p.finish(true);assert.equal(providerCalls,before+1);}
+   const row=(await securityPool().query('SELECT price_snapshot,reserved_usd,charged_usd,attempts FROM ai_request WHERE id=$1',[p.id])).rows[0];
+   assert.equal(row.price_snapshot.maxInputTokens,120000);assert.equal(row.price_snapshot.maxOutputTokens,180);assert.equal(row.price_snapshot.maxAttempts,1);
+   assert.equal(Number(row.reserved_usd),Math.ceil(cost(p.config.prices['gpt-4o-mini'],120000,180)*1e8)/1e8);
+   assert.equal(row.attempts,size>120000?0:1);assert.ok(Math.abs(Number(row.charged_usd)-(size>120000?0:cost(p.config.prices['gpt-4o-mini'],size,180)))<1e-8);
+  }
+ }finally{if(old===undefined)delete process.env.AI_CLOSING_MAX_INPUT_BYTES;else process.env.AI_CLOSING_MAX_INPUT_BYTES=old;}
+});
+suite('Q10 larger cap cannot bypass real account/global money checks or modify interpretation reservation',async()=>{
+ await clearUsage();const old=process.env.AI_CLOSING_MAX_INPUT_BYTES,day=process.env.AI_GLOBAL_DAY_USD;process.env.AI_CLOSING_MAX_INPUT_BYTES='120000';
+ try{
+  const before=providerCalls;
+  await securityPool().query('UPDATE "user" SET "monthlyBudget"=.018 WHERE id=$1',[user.id]);
+  await assert.rejects(reserveUsage(user,'closing',randomUUID()),(e:unknown)=>e instanceof SecurityError&&e.code==='AI_BUDGET_LIMIT'&&e.status===429);
+  await securityPool().query('UPDATE "user" SET "monthlyBudget"=NULL WHERE id=$1',[user.id]);process.env.AI_GLOBAL_DAY_USD='.018';
+  await assert.rejects(reserveUsage(user,'closing',randomUUID()),(e:unknown)=>e instanceof SecurityError&&e.code==='AI_BUDGET_LIMIT'&&e.status===429);
+  process.env.AI_GLOBAL_DAY_USD=day;const interpretationPermit=await reserveUsage(user,'interpretation',randomUUID());
+  assert.equal(interpretationPermit.config.prices['gpt-6.1-sol'].maxInputTokens,120000);await interpretationPermit.finish(false);assert.equal(providerCalls,before);
+ }finally{process.env.AI_GLOBAL_DAY_USD=day;if(old===undefined)delete process.env.AI_CLOSING_MAX_INPUT_BYTES;else process.env.AI_CLOSING_MAX_INPUT_BYTES=old;}
+});
 suite('DB outage produces 503 and zero provider calls on all routes',async()=>{await securityPool().end();const before=providerCalls;for(const route of [closing,interpretation,analyze])assert.equal((await route(json('/api/x',{},cookies.tester))).status,503);assert.equal(providerCalls,before);});

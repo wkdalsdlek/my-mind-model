@@ -47,8 +47,8 @@ export function featureModel(feature: Feature) { return feature === "closing" ? 
  * for reservation and reported usage; never mutate the shared price settings. */
 export function featureBudgetConfig(feature: Feature, env: NodeJS.ProcessEnv = process.env): ReturnType<typeof budgetConfig> {
   const config = budgetConfig(env);
-  if (feature !== "interpretation" || env.VERCEL_ENV !== "preview") return config;
-  const raw = env.AI_INTERPRETATION_MAX_INPUT_BYTES;
+  if (feature === "analyze" || env.VERCEL_ENV !== "preview") return config;
+  const raw = feature === "closing" ? env.AI_CLOSING_MAX_INPUT_BYTES : env.AI_INTERPRETATION_MAX_INPUT_BYTES;
   if (raw === undefined) return config;
   const limit = Number(raw);
   if (!Number.isSafeInteger(limit) || String(limit) !== raw || limit < 4096 || limit > 120000) throw new SecurityError("BUDGET_NOT_CONFIGURED");

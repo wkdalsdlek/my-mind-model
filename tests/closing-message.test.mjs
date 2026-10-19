@@ -723,7 +723,11 @@ test("real route uses the installed SDK contract with mocked completions and sys
     assert.equal(options.apiKey, "test-route-key");
     assert.equal(options.maxRetries, 0);
     assert.equal(options.timeout, 30000);
-    assert.equal(params.model, "gpt-4o-mini");
+    assert.equal(params.model, "gpt-6.1-sol");
+    assert.equal(params.reasoning_effort, "low");
+    assert.equal(params.max_completion_tokens, 4096);
+    assert.ok(!Object.hasOwn(params, "temperature"));
+    assert.equal(params.service_tier, "default");
     assert.equal(params.response_format.type, "json_schema");
     assert.equal(params.response_format.json_schema.strict, true);
     assert.equal(params.store, false);

@@ -1,4 +1,5 @@
 import { AI_USAGE_MESSAGES, isAIUsageErrorCode } from "../../ai-usage-errors";
+import { AI_PRICED_MODELS, CLOSING_MODEL_SETTINGS, ANALYSIS_MODEL_SETTINGS } from "../ai-model-settings";
 /** Fail closed: every value comes from server-owned configuration, never Host. */
 export type Feature = "closing" | "interpretation" | "analyze";
 export class SecurityError extends Error {
@@ -44,7 +45,7 @@ const count = (value:string|undefined) => { const n=positive(value); if(!Number.
 export interface Price { input: number; cachedInput: number; output: number; maxInputTokens: number; verifiedAt: string; source: string }
 export function budgetConfig(env: NodeJS.ProcessEnv = process.env) {
   let prices: Record<string, Price>; try { prices = JSON.parse(env.AI_MODEL_PRICES_JSON || ""); } catch { throw new SecurityError("BUDGET_NOT_CONFIGURED"); }
-  for (const model of ["gpt-4o-mini", "gpt-6.1-sol"]) {
+  for (const model of AI_PRICED_MODELS) {
     const p = prices?.[model];
     if (!p || [p.input, p.cachedInput, p.output, p.maxInputTokens].some(x => !Number.isFinite(x) || x <= 0)
       || p.cachedInput > p.input || !Number.isSafeInteger(p.maxInputTokens) || !/^\d{4}-\d{2}-\d{2}$/.test(p.verifiedAt) || !p.source?.startsWith("https://")) throw new SecurityError("BUDGET_NOT_CONFIGURED");
@@ -52,7 +53,10 @@ export function budgetConfig(env: NodeJS.ProcessEnv = process.env) {
   return { prices, userMonth: positive(env.AI_USER_MONTH_USD), globalDay: positive(env.AI_GLOBAL_DAY_USD), globalMonth: positive(env.AI_GLOBAL_MONTH_USD),
     globalDayRequests: count(env.AI_GLOBAL_DAY_REQUESTS), globalMonthRequests: count(env.AI_GLOBAL_MONTH_REQUESTS), concurrency: count(env.AI_GLOBAL_CONCURRENCY) };
 }
-export function featureModel(feature: Feature) { return feature === "closing" ? { model: "gpt-4o-mini", output: 180, attempts: 1 } : { model: "gpt-6.1-sol", output: 25000, attempts: 2 }; }
+export function featureModel(feature: Feature) {
+  const settings = feature === "closing" ? CLOSING_MODEL_SETTINGS : ANALYSIS_MODEL_SETTINGS;
+  return { model: settings.model, output: settings.output, attempts: settings.attempts };
+}
 /** Request-local Preview override. Bytes also remain a conservative token bound
  * for reservation and reported usage; never mutate the shared price settings. */
 export function featureBudgetConfig(feature: Feature, env: NodeJS.ProcessEnv = process.env): ReturnType<typeof budgetConfig> {

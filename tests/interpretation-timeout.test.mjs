@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHmac, randomUUID } from "node:crypto";
 import { createModuleLoader } from "./helpers/load-typescript.mjs";
-import { universeState } from "./helpers/aurora-universe-fixture.mjs";
+import { universeState, universeModelResponse, universeInterpretation } from "./helpers/aurora-universe-fixture.mjs";
 
 const inputModule = createModuleLoader()("lib/aurora-interpretation.ts");
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -38,6 +38,7 @@ function clockFor(t) {
 }
 function output(context, invalid = false) {
   if (invalid) return "{}";
+  if (context.situation) return JSON.stringify(universeModelResponse(context));
   const grounded = refs => ({ text: "실제 표현에서 여러 가치를 함께 살피려는 가능성을 읽어 볼 수 있습니다.", evidenceRefs: refs,
     basis: refs.length ? "answer-grounded" : "insufficient-evidence" });
   return JSON.stringify({ auroraName: "함께 흐르는 시간", quoteId: "seneca-letters-1-1-self", q10Anchor: "내 시간",
@@ -52,10 +53,16 @@ function scenario(t, plans, options = {}) {
   const clock = clockFor(t), diagnostics = [], attempts = [];
   const sharedPolicy = createModuleLoader()("lib/server/security/policy.ts");
   const deadlineModule = createModuleLoader({ "./security/policy": sharedPolicy })("lib/server/interpretation-deadline.ts");
+  // Historical regressions retain their explicitly named 45/70/85/95s profile.
+  // New extended cases below use the actual production constants unchanged.
+  if (!options.extended) Object.assign(deadlineModule.INTERPRETATION_TIMING, {
+    attemptMs: 70000, workMs: 85000, totalMs: 95000, settlementMs: 10000, finalizationMs: 0,
+  });
   if (options.attemptMs !== undefined) deadlineModule.INTERPRETATION_TIMING.attemptMs = options.attemptMs;
   if (options.workMs !== undefined) deadlineModule.INTERPRETATION_TIMING.workMs = options.workMs;
   if (options.totalMs !== undefined) deadlineModule.INTERPRETATION_TIMING.totalMs = options.totalMs;
-  const row = { state: "pending", attempts: 0, reserved_usd: .74, charged_usd: .74 };
+  const reserved = options.extended ? .98 : .74;
+  const row = { state: "pending", attempts: 0, reserved_usd: reserved, charged_usd: reserved };
   const counts = { provider: 0, reserves: 0, finishes: 0, auth: 0, reservationStarted: 0 };
   const db = { async query(sql, values = []) {
     const one = r => ({ rows: r ? [r] : [], rowCount: r ? 1 : 0 });
@@ -69,6 +76,8 @@ function scenario(t, plans, options = {}) {
       attempts[values[1] - 1].state = "uncertain"; return one();
     }
     if (sql.startsWith("UPDATE ai_attempt SET state=$3")) {
+      const reportedDelay = plans[values[1] - 1]?.accountingDelayMs ?? options.reportedDelayMs;
+      if (reportedDelay) await clock.delay(reportedDelay);
       Object.assign(attempts[values[1] - 1], { state: values[2], estimated_usd: values[7] }); return one();
     }
     if (sql.startsWith("SELECT state,estimated_usd FROM ai_attempt")) return { rows: attempts };
@@ -82,17 +91,18 @@ function scenario(t, plans, options = {}) {
     "../interpretation-deadline": deadlineModule, "./database": { locked: fn => fn(db) } });
   const { ModelPermit } = load("lib/server/security/usage.ts"), policy = sharedPolicy;
   const permit = new ModelPermit("synthetic-request", "synthetic-user", "interpretation", {
-    prices: { "gpt-6.1-sol": { input: 2, cachedInput: .1, output: 10, maxInputTokens: 60000 } },
+    prices: { "gpt-6.1-sol": { input: 2, cachedInput: .1, output: 10, maxInputTokens: options.extended ? 120000 : 60000 } },
   });
   const service = createModuleLoader({ "./interpretation-deadline": deadlineModule })("lib/server/aurora-interpretation-service.ts");
   const dependencies = { apiKey: () => "mock-only", diagnostic: v => diagnostics.push(v),
     isTimeoutError: error => error instanceof MockSdkTimeout,
-    complete: async ({ context, attempt, signal }) => {
+    complete: async ({ context, attempt, signal, providerCompleted }) => {
       const plan = plans[attempt - 1]; assert.ok(plan, "unexpected extra attempt");
       const result = await permit.run({ model: "gpt-6.1-sol", max_completion_tokens: 25000 }, async () => {
         counts.provider++; await clock.delay(plan.delay, signal, plan.ignoreAbort);
         if (plan.sdkTimeout) throw new MockSdkTimeout("PRIVATE_SDK_MARKER");
         if (plan.error) throw plan.error;
+        providerCompleted();
         return { content: output(context, plan.invalid), usage: plan.noUsage ? undefined : { prompt_tokens: 1000, completion_tokens: 2000 } };
       }, signal);
       return { content: result.content, finishReason: "stop", refused: false,
@@ -104,6 +114,7 @@ function scenario(t, plans, options = {}) {
       counts.auth++;
       if (counts.auth === 1 && options.authenticationDelayMs) await clock.delay(options.authenticationDelayMs);
       if (counts.auth === 2 && options.revalidationDelayMs) await clock.delay(options.revalidationDelayMs);
+      if (counts.auth >= 3 && options.finalSessionDelayMs) await clock.delay(options.finalSessionDelayMs);
       return { id: "synthetic-user" };
     } }, "./rate-limit": { consumeWindow: async () => {} },
     "./usage": { reserveUsage: async () => {
@@ -113,7 +124,7 @@ function scenario(t, plans, options = {}) {
     }, requestDigest: () => "synthetic-digest" },
   })("lib/server/security/api.ts");
   const controller = new AbortController(), state = universeState(), saved = structuredClone(state);
-  const payload = inputModule.buildAuroraInterpretationRequest(state, "balanced", "hybrid");
+  const payload = inputModule.buildAuroraInterpretationRequest(state, "balanced", "hybrid", options.deep ? "합성 검증용 상황입니다." : undefined);
   if (options.preAbort) controller.abort();
   const request = new Request("https://preview.example.invalid/api/aurora-interpretation", { method: "POST",
     headers: { origin: "https://preview.example.invalid", "content-type": "application/json" }, body: JSON.stringify(payload), signal: controller.signal });
@@ -148,15 +159,15 @@ test("70000ms candidate still refuses an overdue response without automatically 
   assert.equal(s.counts.provider, 1); assert.equal(s.row.charged_usd, .74); s.assertPrivate();
 });
 test("85s shared work budget prevents two full 70s calls; late second attempt is billed conservatively", async t => {
-  const s = scenario(t, [{ delay: 60000, invalid: true }, { delay: 60000 }], { attemptMs: 70000 });
-  await until(() => s.counts.provider === 1); await s.clock.advance(60000);
-  assert.equal(s.counts.provider, 2); await s.clock.advance(25000);
+  const s = scenario(t, [{ delay: 30000, invalid: true }, { delay: 60000 }], { attemptMs: 70000 });
+  await until(() => s.counts.provider === 1); await s.clock.advance(30000);
+  assert.equal(s.counts.provider, 2); await s.clock.advance(55000);
   assert.equal((await s.promise).status, 408); assert.equal(s.diagnostics.at(-1).abortSource, "work-timeout");
-  assert.equal(s.diagnostics.at(-1).attemptElapsedMs, 25000); assert.equal(s.row.charged_usd, .74); s.assertPrivate();
+  assert.equal(s.diagnostics.at(-1).attemptElapsedMs, 55000); assert.equal(s.row.charged_usd, .74); s.assertPrivate();
 });
 test("recommended 85s shared work budget leaves 10s before 95s target", async t => {
-  const s = scenario(t, [{ delay: 60000, invalid: true }, { delay: 30000 }]);
-  await until(() => s.counts.provider === 1); await s.clock.advance(60000); await s.clock.advance(25000);
+  const s = scenario(t, [{ delay: 30000, invalid: true }, { delay: 60000 }]);
+  await until(() => s.counts.provider === 1); await s.clock.advance(30000); await s.clock.advance(55000);
   assert.equal((await s.promise).status, 408); assert.equal(s.diagnostics.at(-1).elapsedMs, 85000);
   assert.equal(s.diagnostics.at(-1).abortSource, "work-timeout"); assert.equal(s.counts.provider, 2); s.assertPrivate();
 });
@@ -344,7 +355,7 @@ for (const cancelled of [false, true]) test(`actual SDK adapter rechecks remaini
   if (cancelled) { await clock.advance(10000); controller.abort(); await clock.advance(65000); }
   else await clock.advance(30000);
   assert.equal((await promise).status, cancelled ? 408 : 200);
-  assert.deepEqual(timeouts, cancelled ? [] : [40000]);
+  assert.deepEqual(timeouts, cancelled ? [] : [130000]);
   assert.equal(counts.calls, cancelled ? 0 : 1);
 });
 
@@ -360,4 +371,136 @@ test("request stage diagnostics are Preview-only and never serialize request dat
     assert.equal(logs.length, 1);
     assert.deepEqual(Object.keys(logs[0][1]).sort(), ["stage", "abortSource", "elapsedMs", "remainingMs", "remainingWorkMs", "totalTimeoutMs", "workTimeoutMs"].sort());
   } finally { deadline.dispose(); if (previous === undefined) delete process.env.VERCEL_ENV; else process.env.VERCEL_ENV = previous; }
+});
+
+test("deep generation taking 60s does not waste its remaining 25s on a full regeneration", async t => {
+  const s = scenario(t, [{ delay: 60000, invalid: true }], { deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(60000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 1);
+  const diagnostic = s.diagnostics.at(-1);
+  assert.equal(diagnostic.validationReason, "invalid-shape");
+  assert.equal(diagnostic.retryDecision, "insufficient-time"); assert.equal(diagnostic.requiredRetryMs, 70000);
+  assert.equal(diagnostic.remainingWorkMs, 25000); assert.equal(s.row.charged_usd, .022); s.assertPrivate();
+});
+test("deep early invalid output can be corrected once without resetting the 85s work clock", async t => {
+  const s = scenario(t, [{ delay: 10000, invalid: true }, { delay: 60000 }], { deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(10000); await s.clock.advance(60000);
+  assert.equal((await s.promise).status, 200); assert.equal(s.counts.provider, 2);
+  assert.equal(s.diagnostics[0].retryDecision, "scheduled"); assert.equal(s.diagnostics.at(-1).elapsedMs, 70000);
+  assert.equal(s.row.charged_usd, .044); s.assertPrivate();
+});
+test("deep 70s timeout starts no corrective call and retains the uncertain reservation", async t => {
+  const s = scenario(t, [{ delay: 90000 }], { deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(70000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 1);
+  assert.equal(s.diagnostics[0].abortSource, "attempt-timeout"); assert.equal(s.row.charged_usd, .74); s.assertPrivate();
+});
+
+test("extended High interpretation completes a 110s provider response inside the new budget", async t => {
+  const s = scenario(t, [{ delay: 110000 }], { extended: true, deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(110000);
+  assert.equal((await s.promise).status, 200); assert.equal(s.counts.provider, 1);
+  assert.equal(s.diagnostics[0].attemptTimeoutMs, 160000); assert.equal(s.row.charged_usd, .022); s.assertPrivate();
+});
+test("extended 160s first-call timeout never starts an automatic second model call", async t => {
+  const s = scenario(t, [{ delay: 180000 }], { extended: true, deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(160000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 1);
+  assert.equal(s.diagnostics[0].abortSource, "attempt-timeout"); assert.equal(s.row.charged_usd, .98); s.assertPrivate();
+});
+test("late 130s invalid deep output cannot buy a meaningless second full regeneration", async t => {
+  const s = scenario(t, [{ delay: 130000, invalid: true }], { extended: true, deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(130000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 1);
+  const d = s.diagnostics.at(-1); assert.equal(d.retryDecision, "insufficient-time");
+  assert.equal(d.remainingWorkMs, 60000); assert.equal(d.remainingModelMs, 40000); assert.equal(d.requiredRetryMs, 160000);
+  assert.equal(s.row.charged_usd, .022); s.assertPrivate();
+});
+test("early validation retry can use 159s then preserve accounting and final settlement time", async t => {
+  const s = scenario(t, [{ delay: 10000, invalid: true }, { delay: 159000, accountingDelayMs: 15000 }], { extended: true, deep: true, finishDelayMs: 10000 });
+  await until(() => s.counts.provider === 1); await s.clock.advance(10000);
+  assert.equal(s.counts.provider, 2); await s.clock.advance(159000); await s.clock.advance(15000); await s.clock.advance(10000);
+  assert.equal((await s.promise).status, 200); assert.equal(s.counts.provider, 2);
+  assert.equal(s.diagnostics.at(-1).elapsedMs, 184000); assert.equal(s.row.charged_usd, .044); s.assertPrivate();
+});
+test("extended request deducts 60s of authentication and reserves 20s for work finalization", async t => {
+  const s = scenario(t, [{ delay: 109000 }], { extended: true, deep: true, authenticationDelayMs: 60000 });
+  await until(() => s.counts.auth === 1); await s.clock.advance(60000); await until(() => s.counts.provider === 1);
+  await s.clock.advance(109000); assert.equal((await s.promise).status, 200);
+  assert.equal(s.diagnostics[0].attemptTimeoutMs, 110000); assert.equal(s.diagnostics[0].elapsedMs, 169000); s.assertPrivate();
+});
+test("too little model time after slow preparation does not reserve an SDK attempt", async t => {
+  const s = scenario(t, [], { extended: true, deep: true, authenticationDelayMs: 151000 });
+  await until(() => s.counts.auth === 1); await s.clock.advance(151000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 0);
+  assert.equal(s.row.state, "no-model"); assert.equal(s.row.charged_usd, 0); s.assertPrivate();
+});
+test("190s work timeout during authentication cannot create a late model reservation", async t => {
+  const s = scenario(t, [], { extended: true, authenticationDelayMs: 230000 });
+  await until(() => s.counts.auth === 1); await s.clock.advance(190000);
+  assert.equal((await s.promise).status, 408); await s.clock.advance(40000);
+  assert.equal(s.counts.provider, 0); assert.equal(s.counts.reserves, 0); s.assertPrivate();
+});
+test("client cancellation after 120s preserves answers and uncertain full reservation", async t => {
+  const s = scenario(t, [{ delay: 150000 }], { extended: true, deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(120000); s.controller.abort(); await flush();
+  assert.equal((await s.promise).status, 408); assert.equal(s.counts.provider, 1);
+  assert.equal(s.diagnostics[0].abortSource, "client-abort"); assert.equal(s.row.charged_usd, .98); s.assertPrivate();
+});
+test("abort-ignoring late SDK response cannot revive a 160s timeout or trigger another call", async t => {
+  const s = scenario(t, [{ delay: 180000, ignoreAbort: true }], { extended: true, deep: true });
+  await until(() => s.counts.provider === 1); await s.clock.advance(160000);
+  assert.equal((await s.promise).status, 408); await s.clock.advance(20000);
+  assert.equal(s.counts.provider, 1); assert.equal(s.row.charged_usd, .98); s.assertPrivate();
+});
+test("210s total deadline keeps slow settlement pending until durable completion, without refunding uncertain work", async t => {
+  const s = scenario(t, [{ delay: 159000 }], { extended: true, deep: true, finishDelayMs: 60000 });
+  await until(() => s.counts.provider === 1); await s.clock.advance(159000); await s.clock.advance(51000);
+  assert.equal((await s.promise).status, 408); assert.equal(s.row.state, "pending"); assert.equal(s.row.charged_usd, .98);
+  await s.clock.advance(9000); assert.equal(s.row.charged_usd, .022); assert.equal(s.counts.provider, 1); s.assertPrivate();
+});
+test("late reservation after 210s is settled as no-model and cannot start paid work", async t => {
+  const s = scenario(t, [], { extended: true, reservationDelayMs: 230000 });
+  await until(() => s.counts.reservationStarted === 1); await s.clock.advance(210000);
+  assert.equal((await s.promise).status, 408); await s.clock.advance(20000);
+  assert.equal(s.counts.provider, 0); assert.equal(s.row.state, "no-model"); assert.equal(s.row.charged_usd, 0); s.assertPrivate();
+});
+test("actual SDK route stops only the model timer before post-response DB accounting", async t => {
+  const clock = clockFor(t), controller = new AbortController(), deadlineModule = createModuleLoader()("lib/server/interpretation-deadline.ts");
+  const deadline = new deadlineModule.InterpretationDeadline(controller.signal); t.after(() => deadline.dispose());
+  const payload = inputModule.buildAuroraInterpretationRequest(universeState()), context = await inputModule.prepareAuroraInterpretation(payload);
+  let calls = 0, started = false;
+  class MockOpenAI { constructor(o) { assert.equal(o.timeout, 160000); assert.equal(o.maxRetries, 0); }
+    chat = { completions: { create: async (_params, { signal }) => { calls++; await clock.delay(159000, signal); return { choices: [{ message: { content: output(context) }, finish_reason: "stop" }] }; } } };
+  }
+  const service = createModuleLoader({ "./interpretation-deadline": deadlineModule })("lib/server/aurora-interpretation-service.ts");
+  const load = createModuleLoader({ openai: MockOpenAI,
+    "../../../lib/server/security/api": { protectAI: (_f, handler) => req => handler(req, { run: async (_p, call) => { started = true; const response = await call(); await clock.delay(15000); return response; } }, deadline) },
+    "../../../lib/server/aurora-interpretation-service": { ...service, createAuroraInterpretationHandler: deps => service.createAuroraInterpretationHandler({ ...deps, apiKey: () => "synthetic-only", diagnostic: () => {} }) },
+  });
+  const { POST, maxDuration } = load("app/api/aurora-interpretation/route.ts"); assert.equal(maxDuration, 240);
+  const promise = POST(new Request("https://preview.example.invalid/api/aurora-interpretation", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }));
+  await until(() => started); await clock.advance(159000); await clock.advance(15000);
+  assert.equal((await promise).status, 200); assert.equal(calls, 1); assert.equal(deadline.elapsedMs(), 174000);
+});
+
+for (const outcome of ["success", "server-timeout", "browser-timeout"]) test(`225s browser timer respects the 210s server envelope: ${outcome}`, async t => {
+  const clock = clockFor(t), { AuroraUniverseRequestController } = createModuleLoader()("lib/aurora-universe.ts");
+  const state = universeState(), saved = structuredClone(state), events = []; let calls = 0, signal, release;
+  const client = new AuroraUniverseRequestController(async (_url, init) => {
+    calls++; signal = init.signal;
+    const context = await inputModule.prepareAuroraInterpretation(JSON.parse(init.body));
+    await new Promise(resolve => { release = resolve; });
+    return outcome === "server-timeout" ? Response.json({ code: "INTERPRETATION_FAILED" }, { status: 408 }) : Response.json({ interpretation: universeInterpretation(context) });
+  });
+  const promise = client.generate(state, { isCurrent: () => true, start: () => events.push("start"), success: () => events.push("success"), failure: code => events.push(code), settled: () => events.push("settled") });
+  await until(() => release);
+  if (outcome === "browser-timeout") {
+    await clock.advance(224999); assert.equal(client.busy, true); assert.equal(signal.aborted, false);
+    await clock.advance(1); await promise; release(); await flush(); assert.equal(signal.aborted, true);
+  } else {
+    await clock.advance(outcome === "success" ? 200000 : 210000); assert.equal(signal.aborted, false); release(); await promise;
+  }
+  assert.equal(calls, 1); assert.equal(client.busy, false); assert.deepEqual(state, saved);
+  assert.deepEqual(events, ["start", outcome === "success" ? "success" : "REQUEST_TIMEOUT", "settled"]);
 });

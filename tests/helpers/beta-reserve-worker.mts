@@ -9,6 +9,6 @@ try{
  const id=process.env.BETA_TEST_USER_ID!;
  const permit=await reserveUsage({id,role:'tester',closingDaily:1,interpretationDaily:3,analyzeDaily:3,monthlyBudget:null},'closing',randomUUID());
  await new Promise(r=>setTimeout(r,700));
- await permit.run({model:'gpt-4o-mini',max_completion_tokens:180},async()=>({usage:{prompt_tokens:1,completion_tokens:1}}));await permit.finish(true);
+ await permit.run({model:'gpt-6.1-sol',max_completion_tokens:4096},async()=>({usage:{prompt_tokens:1,completion_tokens:1}}));await permit.finish(true);
  process.stdout.write(JSON.stringify({reserved:true}));
 }catch{process.stdout.write(JSON.stringify({reserved:false}));}finally{await securityPool().end();}

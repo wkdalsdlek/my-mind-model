@@ -25,7 +25,7 @@ afterEach(() => {
 });
 const measured = p => Buffer.byteLength(JSON.stringify(p), "utf8") + 4096;
 function paramsWithSize(size, feature = "interpretation") {
-  const params = { model: feature === "closing" ? "gpt-4o-mini" : "gpt-6.1-sol", max_completion_tokens: feature === "closing" ? 180 : 25000,
+  const params = { model: "gpt-6.1-sol", max_completion_tokens: feature === "closing" ? 4096 : 25000,
     messages: [{ role: "user", content: "합성 🌌" }] };
   params.messages[0].content += "x".repeat(size - measured(params));
   assert.equal(measured(params), size);
@@ -170,7 +170,7 @@ test("Q10 and legacy analyze reserve their original caps even with override enab
   process.env[overrideKey] = "60000";
   for (const feature of ["closing", "analyze"]) {
     const h = harness(), permit = await h.reserve(feature);
-    const expectedModel = feature === "closing" ? "gpt-4o-mini" : "gpt-6.1-sol";
+    const expectedModel = "gpt-6.1-sol";
     assert.equal(permit.config.prices[expectedModel].maxInputTokens, 16000);
     await assert.rejects(h.run(permit, paramsWithSize(47336, feature)), isError("MODEL_BUDGET_MISMATCH"));
     assert.equal(h.state.calls, 0);
@@ -368,7 +368,7 @@ for (const monthlyBudget of [20, 25, 30]) test(`existing account policy supports
   await h.run(tenth, paramsWithSize(110000)); await tenth.finish(true);
   await assert.rejects(h.reserve(), isError("USER_DAILY_LIMIT"));
   // Nine earlier interpretations do not consume the distinct Q10 daily count.
-  const closing = await h.reserve("closing"); assert.equal(closing.config.prices["gpt-4o-mini"].maxInputTokens, 16000);
+  const closing = await h.reserve("closing"); assert.equal(closing.config.prices["gpt-6.1-sol"].maxInputTokens, 16000);
 });
 
 test("account monthly override does not bypass the shared global monthly budget", async () => {

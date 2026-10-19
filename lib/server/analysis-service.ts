@@ -1,13 +1,14 @@
 import { QUESTION_DATA, type QuestionId } from "../question-data";
 import { QUESTIONS } from "../capsules";
+import { ANALYSIS_MODEL_SETTINGS } from "./ai-model-settings";
 
-export const ANALYSIS_MODEL = "gpt-6.1-sol";
-export const ANALYSIS_REASONING_EFFORT = "medium";
+export const ANALYSIS_MODEL = ANALYSIS_MODEL_SETTINGS.model;
+export const ANALYSIS_REASONING_EFFORT = ANALYSIS_MODEL_SETTINGS.reasoningEffort;
 // Shared by internal reasoning and visible JSON, not a visible-output allowance.
-export const ANALYSIS_MAX_COMPLETION_TOKENS = 25000;
+export const ANALYSIS_MAX_COMPLETION_TOKENS = ANALYSIS_MODEL_SETTINGS.output;
 // Standard, short-context USD/1M tokens; reviewed 2026-10-14. Billing may differ.
 export const ANALYSIS_TOKEN_PRICES = { input: 2, cachedInput: 0.1, output: 10 } as const;
-export const ANALYSIS_MAX_ATTEMPTS = 2;
+export const ANALYSIS_MAX_ATTEMPTS = ANALYSIS_MODEL_SETTINGS.attempts;
 export const ANALYSIS_INPUT_LIMITS = { bodyBytes: 131072, perAnswer: 6000, totalText: 26000, modelCharacters: 80000 } as const;
 const questionIds = QUESTION_DATA.map(q => q.id);
 const SKIPPED_ANSWER = "[사용자가 건너뛴 문항 — 선택한 키워드 없음]";

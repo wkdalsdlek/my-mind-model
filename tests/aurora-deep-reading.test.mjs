@@ -67,7 +67,7 @@ test('strict v2 schema reuses definitions and input stays within 120KB for repre
  const walk=v=>{if(!v||typeof v!=='object')return;if(v.type==='object'){assert.equal(v.additionalProperties,false);assert.deepEqual(v.required,Object.keys(v.properties));}for(const value of Object.values(v))walk(value);};walk(schema);
  const params={model:service.INTERPRETATION_MODEL,reasoning_effort:service.INTERPRETATION_REASONING_EFFORT,max_completion_tokens:service.INTERPRETATION_MAX_COMPLETION_TOKENS,store:false,service_tier:'default',response_format:schema,messages:[{role:'system',content:service.interpretationSystemPrompt(context)},{role:'user',content:JSON.stringify(service.interpretationModelInput(context))}]};
  const bytes=Buffer.byteLength(JSON.stringify(params),'utf8')+4096;assert.ok(bytes<120000,`bytes=${bytes}`);
- assert.equal(params.model,'gpt-6.1-sol');assert.equal(params.reasoning_effort,'medium');assert.equal(params.max_completion_tokens,25000);assert.equal(service.INTERPRETATION_LIMITS.maxAttempts,2);assert.equal(service.INTERPRETATION_LIMITS.workMs,85000);assert.equal(service.INTERPRETATION_LIMITS.totalMs,95000);
+ assert.equal(params.model,'gpt-6.1-sol');assert.equal(params.reasoning_effort,'high');assert.equal(params.max_completion_tokens,25000);assert.equal(service.INTERPRETATION_LIMITS.maxAttempts,2);assert.equal(service.INTERPRETATION_LIMITS.workMs,190000);assert.equal(service.INTERPRETATION_LIMITS.totalMs,210000);
  assert.match(params.messages[0].content,/상황만으로/);assert.match(params.messages[0].content,/현재 성격으로 옮기지/);assert.equal(service.interpretationModelInput(context).situation.rawText,scenario);
 });
 test('actual handler v2 mock produces one complete result and retries invalid partial report only once',async()=>{

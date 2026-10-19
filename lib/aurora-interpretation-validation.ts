@@ -52,11 +52,16 @@ function contextualGrounded(value: unknown, allowed: readonly string[], keywords
     || !Array.isArray(value.contextRefs) || value.contextRefs.length !== 1 || value.contextRefs[0] !== SITUATION_REF) invalid("situation-reference-mismatch");
   return { ...grounded({ text: value.text, basis: value.basis, evidenceRefs: value.evidenceRefs }, allowed, keywords, max, contextRaw), contextRefs: [SITUATION_REF] };
 }
-export function parseAuroraInterpretation(raw: unknown, context: AuroraInterpretationContext): AuroraInterpretationResult {
+/** Both provider encodings reject duplicate keys before consuming decoded fields. */
+export function parseInterpretationJson(raw: unknown): unknown {
   if (typeof raw !== "string" || raw.length > AURORA_INTERPRETATION_OUTPUT_LIMIT) invalid("invalid-json");
   let body: unknown;
   try { body = JSON.parse(raw); } catch { invalid("invalid-json"); }
   rejectDuplicateKeys(raw);
+  return body;
+}
+export function parseAuroraInterpretation(raw: unknown, context: AuroraInterpretationContext): AuroraInterpretationResult {
+  const body = parseInterpretationJson(raw);
   const deep = !!context.situation;
   if (!isRecord(body) || !exactKeys(body, ["auroraName", "quoteId", "q10Anchor", "quoteReason", "overall", "ribbons", ...(deep ? ["report"] : [])])) invalid("invalid-shape");
   if (body.quoteId === "none") throw new AuroraInterpretationError("QUOTE_CANDIDATES_INSUFFICIENT");

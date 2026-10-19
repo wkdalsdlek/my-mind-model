@@ -11,8 +11,8 @@ afterEach(() => {
   else process.env.VERCEL_ENV = savedPreview;
 });
 const paramsFor = (feature = "interpretation") => ({
-  model: feature === "closing" ? "gpt-4o-mini" : "gpt-6.1-sol",
-  max_completion_tokens: feature === "closing" ? 180 : 25000,
+  model: "gpt-6.1-sol",
+  max_completion_tokens: feature === "closing" ? 4096 : 25000,
   messages: [{ role: "user", content: "PRIVATE_ANSWER_MARKER 한글 🌌" }],
   response_format: { type: "json_schema", json_schema: { name: "synthetic", schema: { description: "PRIVATE_SCHEMA_MARKER" } } },
 });

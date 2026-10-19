@@ -26,7 +26,7 @@ afterEach(() => {
 });
 const measured = p => Buffer.byteLength(JSON.stringify(p), "utf8") + 4096;
 function paramsWithSize(size, feature = "closing") {
-  const params = { model: feature === "closing" ? "gpt-4o-mini" : "gpt-6.1-sol", max_completion_tokens: feature === "closing" ? 180 : 25000,
+  const params = { model: "gpt-6.1-sol", max_completion_tokens: feature === "closing" ? 4096 : 25000,
     messages: [{ role: "user", content: "합성 🌌" }] };
   params.messages[0].content += "x".repeat(size - measured(params));
   assert.equal(measured(params), size);
@@ -181,7 +181,7 @@ test("Q1-Q9 -> real Q10 route -> approval -> real interpretation route -> bound 
  const {questionnaireReducer:reduce,getApprovedClosingMessage}=pure("lib/questionnaire-state.ts");
  const closingInput=pure("lib/closing-message.ts").buildClosingMessageInput(state,state.closing.authoredText,state.closing.authoredWord);
  const apiModule=createModuleLoader({"./policy":{...h.policy,authConfig:()=>({origins:["https://preview.example.invalid"]})},"./auth":{principal:async()=>{authCalls++;return h.principal;}},"./rate-limit":{consumeWindow:async()=>{}},"./usage":{reserveUsage:(_u,f,d)=>h.reserve(f,d),requestDigest:f=>`synthetic-${f}`}})("lib/server/security/api.ts");
- class MockOpenAI{chat={completions:{create:async params=>{providerCalls++;return {usage:{prompt_tokens:2000,completion_tokens:100},choices:[{finish_reason:"stop",message:{content:params.model==="gpt-4o-mini"?JSON.stringify({text:"내 시간을 지키며 함께 걸어간다"}):modelOutput}}]};}}};}
+ class MockOpenAI{chat={completions:{create:async params=>{providerCalls++;return {usage:{prompt_tokens:2000,completion_tokens:100},choices:[{finish_reason:"stop",message:{content:params.response_format.json_schema.name==="closing_message"?JSON.stringify({text:"내 시간을 지키며 함께 걸어간다"}):modelOutput}}]};}}};}
  const closingService=pure("lib/server/closing-message-service.ts"),interpretService=pure("lib/server/aurora-interpretation-service.ts");
  const deps={openai:MockOpenAI,"../../../lib/server/security/api":apiModule,
  "../../../lib/server/closing-message-service":{...closingService,createClosingMessageHandler:d=>closingService.createClosingMessageHandler({...d,apiKey:()=>"synthetic-provider-key"})},

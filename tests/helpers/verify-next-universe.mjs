@@ -53,7 +53,7 @@ try {
       const body=JSON.parse(raw),kind=body.response_format?.json_schema?.name;
       let content;
       if(kind==='aurora_interpretation'){
-        report.provider.interpretation++;assert.equal(body.model,'gpt-6.1-sol');assert.equal(body.reasoning_effort,'medium');
+        report.provider.interpretation++;assert.equal(body.model,'gpt-6.1-sol');assert.equal(body.reasoning_effort,'high');
         assert.equal(body.response_format.json_schema.strict,true);assert.equal(body.store,false);report.provider.configChecks++;
         if(mode==='fail'){res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Synthetic provider unavailable',type:'server_error'}}));return;}
         const input=JSON.parse(body.messages.at(-1).content),value=draft(input);

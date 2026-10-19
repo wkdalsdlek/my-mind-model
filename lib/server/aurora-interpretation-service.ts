@@ -4,7 +4,7 @@ import { parseAuroraInterpretation, AURORA_INTERPRETATION_OUTPUT_LIMIT } from ".
 export { parseAuroraInterpretation } from "../aurora-interpretation-validation";
 import { AuroraInterpretationError, isRecord, prepareAuroraInterpretation } from "../aurora-interpretation";
 import type { AuroraInterpretationErrorCode } from "../aurora-interpretation";
-import type { AuroraInterpretationContext } from "../aurora-interpretation-types";
+import type { AuroraInterpretationContext, AuroraInterpretationResult } from "../aurora-interpretation-types";
 import { philosophyQuoteCandidates } from "../philosophy-quotes";
 import { InterpretationDeadline, INTERPRETATION_TIMING, awaitSignal, type InterpretationAbortSource } from "./interpretation-deadline";
 import { ANALYSIS_MODEL, ANALYSIS_REASONING_EFFORT, ANALYSIS_MAX_COMPLETION_TOKENS, ANALYSIS_MAX_ATTEMPTS,
@@ -100,6 +100,21 @@ export interface InterpretationDiagnostic extends AnalysisTokenUsage {
   finishReason: "stop" | "length" | "content_filter" | "unknown"; expectedRibbons: number; providerStatus?: number;
   abortSource?: InterpretationAbortSource;
   elapsedMs?: number; attemptElapsedMs?: number; attemptTimeoutMs?: number; totalTimeoutMs?: number; workTimeoutMs?: number;
+  validationReason?: InterpretationValidationReason; retryDecision?: "scheduled" | "insufficient-time" | "attempts-exhausted" | "not-retryable";
+  outputCharacters?: number; remainingWorkMs?: number; remainingModelMs?: number; requiredRetryMs?: number;
+}
+const validationReasons = ["invalid-json", "duplicate-key", "invalid-shape", "invalid-text", "evidence-mismatch", "unknown-keyword",
+  "situation-reference-mismatch", "unknown-quote", "quote-grounding", "q10-missing", "context-missing", "ribbon-count-mismatch",
+  "ribbon-id-mismatch", "invalid-reflection", "report-sections-mismatch", "present-context-missing", "letter-q10-missing"] as const;
+export type InterpretationValidationReason = typeof validationReasons[number];
+export function interpretationValidationReason(error: unknown): InterpretationValidationReason | undefined {
+  return error instanceof AuroraInterpretationError && error.code === "INTERPRETATION_RESPONSE_INVALID"
+    && validationReasons.includes(error.reason as InterpretationValidationReason) ? error.reason as InterpretationValidationReason : undefined;
+}
+/** A deep full regeneration should have at least the first generation's time
+ * plus headroom, rather than spending another reservation on a 20s fragment. */
+export function interpretationRetryMinimumMs(_context: AuroraInterpretationContext, firstAttemptMs: number): number {
+  return Math.min(INTERPRETATION_TIMING.attemptMs, Math.max(INTERPRETATION_TIMING.minAttemptMs, Math.ceil(firstAttemptMs * 1.25)));
 }
 /** Only allowlisted scalars. No hashes, input, output, quotes, SDK errors or keys. */
 export function logInterpretationDiagnostic(value: InterpretationDiagnostic): void {
@@ -108,18 +123,22 @@ export function logInterpretationDiagnostic(value: InterpretationDiagnostic): vo
     || !["stop", "length", "content_filter", "unknown"].includes(value.finishReason)) return;
   const safe: Record<string, number | string> = { attempt: value.attempt, outcome: value.outcome, finishReason: value.finishReason,
     model: INTERPRETATION_MODEL, reasoningEffort: INTERPRETATION_REASONING_EFFORT, maxCompletionTokens: INTERPRETATION_MAX_COMPLETION_TOKENS };
-  for (const key of ["expectedRibbons", "providerStatus", "promptTokens", "completionTokens", "totalTokens", "reasoningTokens", "cachedPromptTokens", "elapsedMs", "attemptElapsedMs", "attemptTimeoutMs", "totalTimeoutMs", "workTimeoutMs"] as const)
+  for (const key of ["expectedRibbons", "providerStatus", "promptTokens", "completionTokens", "totalTokens", "reasoningTokens", "cachedPromptTokens", "elapsedMs", "attemptElapsedMs", "attemptTimeoutMs", "totalTimeoutMs", "workTimeoutMs", "outputCharacters", "remainingWorkMs", "remainingModelMs", "requiredRetryMs"] as const)
     if (typeof value[key] === "number" && Number.isSafeInteger(value[key]) && value[key]! >= 0) safe[key] = value[key]!;
   if (["none", "client-abort", "attempt-timeout", "work-timeout", "total-timeout", "sdk-timeout", "insufficient-time"].includes(value.abortSource ?? "")) safe.abortSource = value.abortSource!;
+  if (validationReasons.includes(value.validationReason!)) safe.validationReason = value.validationReason!;
+  if (["scheduled", "insufficient-time", "attempts-exhausted", "not-retryable"].includes(value.retryDecision ?? "")) safe.retryDecision = value.retryDecision!;
   const cost = estimateAnalysisStandardCostUsd(value);
   if (cost !== undefined) safe.estimatedStandardCostUsd = cost;
   try { console.info("[aurora-interpretation-server]", safe); } catch { /* Diagnostics must not trigger a paid retry or replace the result. */ }
 }
 export interface AuroraInterpretationDependencies {
   apiKey: () => string | undefined;
-  complete: (options: { apiKey: string; context: AuroraInterpretationContext; attempt: 1 | 2; signal: AbortSignal; timeoutMs: number; remainingMs: () => number }) => Promise<AnalysisCompletion>;
+  complete: (options: { apiKey: string; context: AuroraInterpretationContext; attempt: 1 | 2; signal: AbortSignal; timeoutMs: number; remainingMs: () => number; providerCompleted: () => void; validationFailure?: InterpretationValidationReason }) => Promise<AnalysisCompletion>;
+  parse?: (raw: unknown, context: AuroraInterpretationContext) => AuroraInterpretationResult;
   diagnostic?: (value: InterpretationDiagnostic) => void;
   isTimeoutError?: (error: unknown) => boolean;
+  providerStatus?: (error: unknown) => number | undefined;
   deadline?: InterpretationDeadline;
 }
 const fail = (code: AuroraInterpretationErrorCode, status: number) => Response.json({ code,
@@ -163,6 +182,7 @@ export function createAuroraInterpretationHandler(deps: AuroraInterpretationDepe
       const apiKey = deps.apiKey()?.trim();
       if (!apiKey) return fail("AI_NOT_CONFIGURED", 503);
       const diagnostic = deps.diagnostic ?? logInterpretationDiagnostic;
+      let validationFailure: InterpretationValidationReason | undefined;
       for (const attempt of [1, 2] as const) {
         deadline.checkWork();
         const window = deadline.attempt(); deadline.stage("model");
@@ -173,9 +193,10 @@ export function createAuroraInterpretationHandler(deps: AuroraInterpretationDepe
             attemptTimeoutMs: window.timeoutMs, totalTimeoutMs: INTERPRETATION_TIMING.totalMs, workTimeoutMs: INTERPRETATION_TIMING.workMs });
           const abortSource = window.source;
           let completion: AnalysisCompletion;
-          try { completion = await deps.complete({ apiKey, context: structuredClone(context), attempt, signal: window.signal, timeoutMs: window.timeoutMs, remainingMs: window.remainingMs }); }
+          try { completion = await deps.complete({ apiKey, context: structuredClone(context), attempt, signal: window.signal, timeoutMs: window.timeoutMs, remainingMs: window.remainingMs, providerCompleted: window.providerCompleted, validationFailure }); }
           catch (e) {
-            const status = isRecord(e) && typeof e.status === "number" && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599 ? e.status : undefined;
+            const status = deps.providerStatus ? deps.providerStatus(e)
+              : isRecord(e) && typeof e.status === "number" && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599 ? e.status : undefined;
             const source = abortSource() !== "none" ? abortSource() : deps.isTimeoutError?.(e) ? "sdk-timeout" : isRecord(e) && e.code === "REQUEST_TIMEOUT" ? "insufficient-time" : "none";
             diagnostic({ attempt, outcome: source !== "none" ? "cancelled" : "generation-failed", finishReason: "unknown", expectedRibbons: context.facts.ribbons.length,
               providerStatus: status, abortSource: source, ...timing() });
@@ -184,24 +205,32 @@ export function createAuroraInterpretationHandler(deps: AuroraInterpretationDepe
           const finishReason = ["stop", "length", "content_filter"].includes(completion.finishReason ?? "") ? completion.finishReason as InterpretationDiagnostic["finishReason"] : "unknown";
           const metadata: InterpretationDiagnostic = { attempt, outcome: "invalid-output", finishReason, expectedRibbons: context.facts.ribbons.length,
             promptTokens: completion.usage?.promptTokens, completionTokens: completion.usage?.completionTokens, totalTokens: completion.usage?.totalTokens,
-            reasoningTokens: completion.usage?.reasoningTokens, cachedPromptTokens: completion.usage?.cachedPromptTokens };
+            reasoningTokens: completion.usage?.reasoningTokens, cachedPromptTokens: completion.usage?.cachedPromptTokens,
+            outputCharacters: typeof completion.content === "string" ? completion.content.length : undefined };
           Object.assign(metadata, timing(), { abortSource: abortSource() });
           if (abortSource() !== "none") { diagnostic({ ...metadata, outcome: "cancelled" }); return fail("INTERPRETATION_FAILED", 408); }
           if (completion.refused || finishReason !== "stop") { diagnostic(metadata); return fail("INTERPRETATION_RESPONSE_INVALID", 502); }
           try {
-            const interpretation = parseAuroraInterpretation(completion.content, context);
+            deadline.stage("validation");
+            const interpretation = (deps.parse ?? parseAuroraInterpretation)(completion.content, context);
             deadline.checkWork();
             diagnostic({ ...metadata, outcome: "success" });
             return Response.json({ interpretation }, { headers: { "Cache-Control": "no-store" } });
           } catch (e) {
             if (abortSource() !== "none") { diagnostic({ ...metadata, outcome: "cancelled", abortSource: abortSource() }); return fail("INTERPRETATION_FAILED", 408); }
-            diagnostic(metadata);
             if (e instanceof AuroraInterpretationError && e.code === "QUOTE_CANDIDATES_INSUFFICIENT") return fail(e.code, 422);
+            validationFailure = interpretationValidationReason(e);
+            metadata.validationReason = validationFailure;
+            metadata.remainingWorkMs = deadline.remainingWorkMs();
+            metadata.remainingModelMs = deadline.remainingModelMs();
+            metadata.requiredRetryMs = interpretationRetryMinimumMs(context, timing().attemptElapsedMs);
+            if (!validationFailure) { diagnostic({ ...metadata, retryDecision: "not-retryable" }); return fail("INTERPRETATION_RESPONSE_INVALID", 502); }
             if (attempt < INTERPRETATION_LIMITS.maxAttempts) {
-              if (deadline.remainingWorkMs() >= INTERPRETATION_TIMING.minAttemptMs) continue;
-              diagnostic({ ...metadata, outcome: "cancelled", abortSource: "insufficient-time" });
+              if (deadline.remainingModelMs() >= metadata.requiredRetryMs) { diagnostic({ ...metadata, retryDecision: "scheduled" }); continue; }
+              diagnostic({ ...metadata, outcome: "cancelled", abortSource: "insufficient-time", retryDecision: "insufficient-time" });
               return fail("INTERPRETATION_FAILED", 408);
             }
+            diagnostic({ ...metadata, retryDecision: "attempts-exhausted" });
             return fail("INTERPRETATION_RESPONSE_INVALID", 502);
           }
         } finally { window.dispose(); }

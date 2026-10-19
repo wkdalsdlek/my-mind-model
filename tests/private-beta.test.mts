@@ -27,7 +27,7 @@ const oldFetch=globalThis.fetch;
 const json=(path:string,body:unknown={},cookie?:string,extra:Record<string,string>={})=>new Request(origin+path,{method:'POST',headers:{'content-type':'application/json',origin,...(cookie?{cookie}:{}),...extra},body:JSON.stringify(body)});
 const login=(email:string,pass=password)=>POST(json('/api/auth/sign-in/email',{email,password:pass}));
 async function clearUsage(){await securityPool().query('TRUNCATE ai_attempt, ai_request');await securityPool().query("DELETE FROM beta_login_limit WHERE key LIKE 'ai-%'");await securityPool().query('UPDATE "user" SET "closingDaily"=5,"interpretationDaily"=3,"analyzeDaily"=3,"monthlyBudget"=NULL');}
-const syntheticParams={model:'gpt-4o-mini',max_completion_tokens:180,messages:[{role:'user',content:'synthetic'}]};
+const syntheticParams={model:'gpt-6.1-sol',max_completion_tokens:4096,messages:[{role:'user',content:'synthetic'}]};
 const complete=async()=>{providerCalls++;return{usage:{prompt_tokens:100,completion_tokens:50,prompt_tokens_details:{cached_tokens:20},completion_tokens_details:{reasoning_tokens:10}}};};
 async function spend(digest:string=randomUUID()){const permit=await reserveUsage(user,'closing',digest);await permit.run(syntheticParams,complete);await permit.finish(true);return permit;}
 const suite=(name:string,fn:()=>void|Promise<void>)=>test(name,{skip:!enabled},fn);
@@ -251,13 +251,13 @@ suite('Q10 Preview override reserves and settles the same 120KB bound; still onl
    const p=await reserveUsage(user,'closing',randomUUID()),params={...syntheticParams,messages:[{role:'user',content:'합성 🌌'}]};
    params.messages[0].content+='x'.repeat(size-Buffer.byteLength(JSON.stringify(params),'utf8')-4096);
    const before=providerCalls;
-   const call=async()=>{providerCalls++;return{usage:{prompt_tokens:size,completion_tokens:180}};};
+   const call=async()=>{providerCalls++;return{usage:{prompt_tokens:size,completion_tokens:4096}};};
    if(size>120000){await assert.rejects(p.run(params,call),(e:unknown)=>e instanceof SecurityError&&e.code==='MODEL_BUDGET_MISMATCH');await p.finish(false);assert.equal(providerCalls,before);}
    else{await p.run(params,call);await assert.rejects(p.run(params,call),(e:unknown)=>e instanceof SecurityError&&e.code==='MODEL_NOT_AUTHORIZED');await p.finish(true);assert.equal(providerCalls,before+1);}
    const row=(await securityPool().query('SELECT price_snapshot,reserved_usd,charged_usd,attempts FROM ai_request WHERE id=$1',[p.id])).rows[0];
-   assert.equal(row.price_snapshot.maxInputTokens,120000);assert.equal(row.price_snapshot.maxOutputTokens,180);assert.equal(row.price_snapshot.maxAttempts,1);
-   assert.equal(Number(row.reserved_usd),Math.ceil(cost(p.config.prices['gpt-4o-mini'],120000,180)*1e8)/1e8);
-   assert.equal(row.attempts,size>120000?0:1);assert.ok(Math.abs(Number(row.charged_usd)-(size>120000?0:cost(p.config.prices['gpt-4o-mini'],size,180)))<1e-8);
+   assert.equal(row.price_snapshot.maxInputTokens,120000);assert.equal(row.price_snapshot.maxOutputTokens,4096);assert.equal(row.price_snapshot.maxAttempts,1);
+   assert.equal(Number(row.reserved_usd),Math.ceil(cost(p.config.prices['gpt-6.1-sol'],120000,4096)*1e8)/1e8);
+   assert.equal(row.attempts,size>120000?0:1);assert.ok(Math.abs(Number(row.charged_usd)-(size>120000?0:cost(p.config.prices['gpt-6.1-sol'],size,4096)))<1e-8);
   }
  }finally{if(old===undefined)delete process.env.AI_CLOSING_MAX_INPUT_BYTES;else process.env.AI_CLOSING_MAX_INPUT_BYTES=old;}
 });
@@ -279,14 +279,14 @@ suite('approved Preview money/count settings permit an authenticated Q10 and int
  try{
   const before=providerCalls;
   for(const feature of ['closing','interpretation'] as const){
-   const route=protectAI(feature,async(_req,p)=>{await p.run({model:feature==='closing'?'gpt-4o-mini':'gpt-6.1-sol',max_completion_tokens:feature==='closing'?180:25000},async()=>{providerCalls++;return {usage:{prompt_tokens:2000,completion_tokens:100}};});return Response.json({ok:true});});
+   const route=protectAI(feature,async(_req,p)=>{await p.run({model:'gpt-6.1-sol',max_completion_tokens:feature==='closing'?4096:25000},async()=>{providerCalls++;return {usage:{prompt_tokens:2000,completion_tokens:100}};});return Response.json({ok:true});});
    assert.equal((await route(json('/api/'+feature,{},cookies.tester))).status,200);
   }
   const rows=(await securityPool().query('SELECT feature,state,attempts,reserved_usd,charged_usd,price_snapshot FROM ai_request ORDER BY created_at')).rows;
   assert.deepEqual(rows.map(r=>r.feature),['closing','interpretation']);assert.equal(providerCalls,before+2);
   assert.ok(rows.every(r=>r.state==='success'&&r.attempts===1&&r.price_snapshot.maxInputTokens===120000));
-  assert.equal(Number(rows[0].reserved_usd),.018108);assert.equal(Number(rows[1].reserved_usd),.98);
-  assert.ok(Math.abs(rows.reduce((sum,r)=>sum+Number(r.charged_usd),0)-.00536)<1e-8);
+  assert.equal(Number(rows[0].reserved_usd),.28096);assert.equal(Number(rows[1].reserved_usd),.98);
+  assert.ok(Math.abs(rows.reduce((sum,r)=>sum+Number(r.charged_usd),0)-.01)<1e-8);
  }finally{for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v;}}
 });
 suite('real account override still blocks $50 environment before SDK and logs only its effective cause',async()=>{

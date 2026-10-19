@@ -1,6 +1,11 @@
 import { CLOSING_ERRORS, CLOSING_MESSAGE_LIMITS, ClosingInputError, validAIClosingText, validateClosingMessageInput, type ClosingErrorCode, type ClosingMessageInput } from "../closing-message";
+import { CLOSING_MODEL_SETTINGS } from "./ai-model-settings";
 
-export const CLOSING_MESSAGE_MODEL = "gpt-4o-mini";
+export const CLOSING_MESSAGE_MODEL = CLOSING_MODEL_SETTINGS.model;
+export const CLOSING_MESSAGE_REASONING_EFFORT = CLOSING_MODEL_SETTINGS.reasoningEffort;
+// Shared by low-effort reasoning and the short JSON. The visible sentence still
+// passes the existing 80-character cap; this is not a request for longer prose.
+export const CLOSING_MESSAGE_MAX_COMPLETION_TOKENS = CLOSING_MODEL_SETTINGS.output;
 export const CLOSING_MESSAGE_SYSTEM_PROMPT = `사용자의 Q10 표현을 하나의 짧고 자연스러운 한국어 문장으로 함축하세요. 공백 포함 20~45자를 목표로 하되 80자를 넘지 마세요.
 단순 키워드 나열이나 설명 대신 감성적이고 절제된 문장 하나만 JSON의 text에 담으세요. 상투적인 빛·우주 은유를 모든 사람에게 반복하지 마세요.
 Q10의 실제 선택과 직접 작성한 원문을 우선하고 그 의도와 표현을 존중하세요. 직접 쓴 문장이 있으면 이를 바탕으로 조심스럽게 다듬으세요.

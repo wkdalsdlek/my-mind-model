@@ -1,9 +1,8 @@
 import { SecurityError } from "./security/policy";
+import { INTERPRETATION_TIMING } from "../aurora-interpretation-timing";
+export { INTERPRETATION_TIMING } from "../aurora-interpretation-timing";
 
-export const INTERPRETATION_TIMING = {
-  attemptMs: 70000, workMs: 85000, totalMs: 95000, settlementMs: 10000, minAttemptMs: 20000,
-} as const;
-export type InterpretationStage = "authentication" | "origin" | "rate-limit" | "body" | "reservation" | "input" | "model" | "settlement" | "session-check" | "response";
+export type InterpretationStage = "authentication" | "origin" | "rate-limit" | "body" | "reservation" | "input" | "model" | "provider" | "model-accounting" | "validation" | "settlement" | "session-check" | "response";
 export type InterpretationAbortSource = "none" | "client-abort" | "attempt-timeout" | "work-timeout" | "total-timeout" | "sdk-timeout" | "insufficient-time";
 
 /** Observe cancellation without ever leaving a late rejection unhandled. Does not
@@ -42,6 +41,7 @@ export class InterpretationDeadline {
   elapsedMs(): number { return Math.max(0, performance.now() - this.startedAt); }
   remainingMs(): number { return Math.max(0, Math.floor(INTERPRETATION_TIMING.totalMs - this.elapsedMs())); }
   remainingWorkMs(): number { return Math.max(0, Math.floor(INTERPRETATION_TIMING.workMs - this.elapsedMs())); }
+  remainingModelMs(): number { return Math.max(0, this.remainingWorkMs() - INTERPRETATION_TIMING.finalizationMs); }
   source(): InterpretationAbortSource {
     return this.clientSignal.aborted ? "client-abort" : this.total.signal.aborted || !this.remainingMs() ? "total-timeout"
       : this.work.signal.aborted || !this.remainingWorkMs() ? "work-timeout" : "none";
@@ -57,18 +57,24 @@ export class InterpretationDeadline {
       elapsedMs: Math.round(this.elapsedMs()), remainingMs: this.remainingMs(), remainingWorkMs: this.remainingWorkMs(),
       totalTimeoutMs: INTERPRETATION_TIMING.totalMs, workTimeoutMs: INTERPRETATION_TIMING.workMs }); } catch { /* No effect on access or billing. */ }
   }
-  attempt(): { signal: AbortSignal; timeoutMs: number; remainingMs: () => number; source: () => InterpretationAbortSource; dispose: () => void } {
+  attempt(): { signal: AbortSignal; timeoutMs: number; remainingMs: () => number; source: () => InterpretationAbortSource; providerCompleted: () => void; dispose: () => void } {
     this.checkWork();
-    const timeoutMs = Math.min(INTERPRETATION_TIMING.attemptMs, this.remainingWorkMs());
+    const timeoutMs = Math.min(INTERPRETATION_TIMING.attemptMs, this.remainingModelMs());
     if (timeoutMs < INTERPRETATION_TIMING.minAttemptMs) {
       this.log("insufficient-time"); throw new SecurityError("REQUEST_TIMEOUT", 408);
     }
     const expiresAt = performance.now() + timeoutMs, timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), timeoutMs); timer.unref?.();
     const signal = AbortSignal.any([this.signal, timeout.signal]);
+    let completed = false;
+    const source = (): InterpretationAbortSource => this.source() !== "none" ? this.source()
+      : timeout.signal.aborted || !completed && performance.now() >= expiresAt ? "attempt-timeout" : "none";
     return { signal, timeoutMs,
-      remainingMs: () => Math.max(0, Math.floor(Math.min(expiresAt - performance.now(), this.remainingWorkMs(), this.remainingMs() - INTERPRETATION_TIMING.settlementMs))),
-      source: () => this.source() !== "none" ? this.source() : timeout.signal.aborted || performance.now() >= expiresAt ? "attempt-timeout" : "none",
+      remainingMs: () => completed ? 0 : Math.max(0, Math.floor(Math.min(expiresAt - performance.now(), this.remainingModelMs(), this.remainingMs() - INTERPRETATION_TIMING.settlementMs))),
+      source,
+      // A provider response received on time may still need DB accounting and
+      // validation. Keep client/work cancellation active, but stop its SDK timer.
+      providerCompleted: () => { if (source() === "none") { completed = true; clearTimeout(timer); } },
       dispose: () => clearTimeout(timer) };
   }
   async respond(task: Promise<Response>): Promise<Response> {

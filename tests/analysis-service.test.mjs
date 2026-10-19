@@ -21,7 +21,7 @@ function service(complete = async () => completion(), apiKey = () => "unit-test-
 }
 test("strict schema requires all ten ID-bound objects using only basic supported keywords", () => {
   assert.equal(ANALYSIS_MODEL, "gpt-6.1-sol");
-  assert.equal(ANALYSIS_REASONING_EFFORT, "medium");
+  assert.equal(ANALYSIS_REASONING_EFFORT, "high");
   assert.equal(ANALYSIS_MAX_COMPLETION_TOKENS, 25000);
   assert.equal(ANALYSIS_MAX_ATTEMPTS, 2);
   assert.equal(ANALYSIS_RESPONSE_FORMAT.type, "json_schema");
@@ -207,7 +207,7 @@ test("actual route SDK configuration uses strict schema, bounded output and no h
     assert.equal(response.status, 200);
     assert.equal(sdkOptions[0].maxRetries, 0); assert.equal(sdkOptions[0].logLevel, "off"); assert.equal(sdkOptions[0].timeout, 45000);
     assert.equal(sdkCalls[0].params.model, ANALYSIS_MODEL);
-    assert.equal(sdkCalls[0].params.reasoning_effort, "medium");
+    assert.equal(sdkCalls[0].params.reasoning_effort, "high");
     for (const unsupported of ["temperature", "top_p", "logprobs", "top_logprobs", "max_tokens", "tools", "tool_choice"]) {
       assert.equal(Object.hasOwn(sdkCalls[0].params, unsupported), false, unsupported);
     }
@@ -222,7 +222,7 @@ test("actual route SDK configuration uses strict schema, bounded output and no h
     assert.equal(diagnostics[0].cachedPromptTokens, 50);
     assert.equal(diagnostics[0].estimatedStandardCostUsd, 0.003105);
     assert.equal(diagnostics[0].model, "gpt-6.1-sol");
-    assert.equal(diagnostics[0].reasoningEffort, "medium");
+    assert.equal(diagnostics[0].reasoningEffort, "high");
     assert.equal(diagnostics[0].maxCompletionTokens, 25000);
     assert.equal(JSON.stringify(diagnostics).includes("unit-test-only"), false);
     assert.equal(JSON.stringify(diagnostics).includes("테스트 답변"), false);
@@ -313,7 +313,7 @@ test("actual route keeps the requested model, reasoning and shared token budget 
     assert.equal(calls.length, 2);
     for (const params of calls) {
       assert.equal(params.model, "gpt-6.1-sol");
-      assert.equal(params.reasoning_effort, "medium");
+      assert.equal(params.reasoning_effort, "high");
       assert.equal(params.max_completion_tokens, 25000);
       assert.equal(Object.hasOwn(params, "temperature"), false);
       assert.deepEqual(params.response_format, ANALYSIS_RESPONSE_FORMAT);

@@ -6,6 +6,7 @@ import { createAuroraRibbonLayout } from "./aurora-ribbon-layout";
 import type { AuroraQuality, AuroraFlowMode } from "./aurora-types";
 import type { QuestionnaireState } from "./questionnaire-state";
 import { AI_USAGE_MESSAGES, isAIUsageErrorCode, type AIUsageErrorCode } from "./ai-usage-errors";
+import { INTERPRETATION_BROWSER_TIMEOUT_MS } from "./aurora-interpretation-timing";
 
 export type AuroraUniverseResult = { version: "aurora-universe-v1"; snapshot: AuroraResultSnapshot; context: AuroraInterpretationContext } & (
   { status: "interpreted"; interpretation: AuroraInterpretationResult } |
@@ -65,7 +66,7 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  * No automatic client retries or legacy analyze call. Nothing is stored globally. */
 export class AuroraUniverseRequestController {
   private active: Token | null = null;
-  constructor(private readonly fetcher: typeof fetch = (...args) => globalThis.fetch(...args), private readonly timeoutMs = 105000) {}
+  constructor(private readonly fetcher: typeof fetch = (...args) => globalThis.fetch(...args), private readonly timeoutMs: number = INTERPRETATION_BROWSER_TIMEOUT_MS) {}
   get busy(): boolean { return this.active !== null; }
   get fingerprint(): string | null { return this.active?.fingerprint ?? null; }
   cancel(notify = true): void {

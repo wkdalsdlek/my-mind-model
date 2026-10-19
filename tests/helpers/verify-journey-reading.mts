@@ -33,11 +33,12 @@ const mock=createServer(async(req,res)=>{
   if(kind==='closing_message'){provider.closing++;content=JSON.stringify({text:sentence});}
   else if(kind==='question_analysis'){provider.legacy++;content=JSON.stringify({analyses:Object.fromEntries(Array.from({length:10},(_,i)=>{const questionId=`q${i+1}`;return[questionId,{questionId,analysis:'실제 답변을 돌아보는 합성 분석입니다.',detailedAnalysis:'선택한 표현을 성찰하는 합성 분석입니다.'}];}))});}
   else {
-   assert.equal(kind,'aurora_interpretation');provider.interpretation++;
+   assert.ok(['aurora_interpretation','aurora_interpretation_compact_v2'].includes(kind));provider.interpretation++;
    if(realAudio)await new Promise(r=>setTimeout(r,1500));
    const input=JSON.parse(body.messages.at(-1).content);
-   const {universeModelResponse}=await import('./aurora-universe-fixture.mjs');
-   content=JSON.stringify(universeModelResponse({approvedClosing:input.approvedClosing,situation:input.situation,facts:{questions:input.questions,ribbons:input.ribbons.map((r:{ribbonId:string;name:string;evidenceRefs:string[]})=>({...r,evidence:r.evidenceRefs.map(ref=>({ref}))}))}}));
+   const {universeModelResponse,universeProviderResponse}=await import('./aurora-universe-fixture.mjs');
+   const generate=kind==='aurora_interpretation_compact_v2'?universeProviderResponse:universeModelResponse;
+   content=JSON.stringify(generate({approvedClosing:input.approvedClosing,situation:input.situation,facts:{questions:input.questions,ribbons:input.ribbons.map((r:{ribbonId:string;name:string;evidenceRefs:string[]})=>({...r,evidence:r.evidenceRefs.map(ref=>({ref}))}))}}));
   }
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:'local-synthetic',object:'chat.completion',created:1,model:body.model,choices:[{index:0,message:{role:'assistant',content,refusal:null},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:100,total_tokens:200,completion_tokens_details:{reasoning_tokens:10},prompt_tokens_details:{cached_tokens:5}}}));
  }catch{res.writeHead(500);res.end('{}');}

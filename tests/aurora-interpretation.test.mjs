@@ -129,9 +129,9 @@ test('schema contains every active ID and only supported basic schema constraint
     if(s.type==='object'){assert.equal(s.additionalProperties,false);assert.deepEqual(s.required,Object.keys(s.properties));Object.values(s.properties).forEach(walk);}
     if(s.type==='array')walk(s.items);
   }walk(root);
-  assert.equal(INTERPRETATION_MODEL,'gpt-6.1-sol');assert.equal(INTERPRETATION_REASONING_EFFORT,'medium');assert.equal(INTERPRETATION_MAX_COMPLETION_TOKENS,25000);
-  assert.equal(INTERPRETATION_LIMITS.attemptMs,70000);assert.equal(INTERPRETATION_LIMITS.workMs,85000);
-  assert.equal(INTERPRETATION_LIMITS.totalMs,95000);assert.equal(INTERPRETATION_LIMITS.maxAttempts,2);
+  assert.equal(INTERPRETATION_MODEL,'gpt-6.1-sol');assert.equal(INTERPRETATION_REASONING_EFFORT,'high');assert.equal(INTERPRETATION_MAX_COMPLETION_TOKENS,25000);
+  assert.equal(INTERPRETATION_LIMITS.attemptMs,160000);assert.equal(INTERPRETATION_LIMITS.workMs,190000);
+  assert.equal(INTERPRETATION_LIMITS.totalMs,210000);assert.equal(INTERPRETATION_LIMITS.maxAttempts,2);
 });
 test('valid output assembles exact code facts, catalog quote, approved text and stable order', async () => {
   const c=await context(),saved=structuredClone(c),body=fixture(c);body.ribbons=Object.fromEntries(Object.entries(body.ribbons).reverse());
@@ -207,10 +207,10 @@ test('cancellation and late completion cannot return a stale success',async()=>{
   assert.equal((await s.handler(request(input(),{signal:controller.signal}))).status,408);assert.equal(s.calls.length,1);
   const early=new AbortController();early.abort();const t=service();assert.equal((await t.handler(request(input(),{signal:early.signal}))).status,408);assert.equal(t.calls.length,0);
 });
-test('approved 70s attempt is bounded by 85s work and 95s total without timeout retry',async t=>{
+test('approved 160s attempt is bounded by 190s work and 210s total without timeout retry',async t=>{
   const observed=[],native=setTimeout;t.mock.method(performance,'now',()=>0);
-  t.mock.method(globalThis,'setTimeout',(fn,ms,...args)=>{observed.push(ms);if(ms===70000){queueMicrotask(fn);return native(()=>{},1);}return native(fn,ms,...args);});
-  const s=service();assert.equal((await s.handler(request())).status,408);assert.deepEqual(observed,[85000,95000,70000]);assert.equal(s.calls.length,1);
+  t.mock.method(globalThis,'setTimeout',(fn,ms,...args)=>{observed.push(ms);if(ms===160000){queueMicrotask(fn);return native(()=>{},1);}return native(fn,ms,...args);});
+  const s=service();assert.equal((await s.handler(request())).status,408);assert.deepEqual(observed,[190000,210000,160000]);assert.equal(s.calls.length,1);
 });
 test('actual streamed body limit is enforced even without Content-Length',async()=>{
   const s=service(),r=request(input(),{body:' '.repeat(INTERPRETATION_LIMITS.bodyBytes+1)});
@@ -248,13 +248,13 @@ test('legacy analyze still returns exactly ten comments; its prompt/model contra
   const response=await handler(new Request('http://localhost/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questions:QUESTIONS,answers:QUESTIONS.map(()=> '기존 답변')})}));
   assert.equal(response.status,200);assert.equal(validateAuroraAnalysisResponse(await response.json()).valid,true);
 });
-test('new route adapter keeps model, medium, timeout, strict schema and SDK retries off without real calls',async()=>{
+test('new route adapter keeps model, high, timeout, strict schema and SDK retries off without real calls',async()=>{
   let options,config,calls=0;
   class MockOpenAI{constructor(value){config=value;this.chat={completions:{create:async(request)=>{options=request;calls++;const c=await context();const b=completion(c);return {choices:[{finish_reason:'stop',message:{content:b.content}}],usage:{prompt_tokens:100,completion_tokens:200,total_tokens:300}};}}};}}
   const old=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='mock-only';
   try{const routeAdapter=createModuleLoader({openai:MockOpenAI,"../../../lib/server/security/api":{protectAI:(_feature,handler)=>req=>handler(req,{run:(_params,call)=>call()})}})('app/api/aurora-interpretation/route.ts');assert.equal((await routeAdapter.POST(request())).status,200);
-    assert.equal(calls,1);assert.equal(config.maxRetries,0);assert.equal(config.logLevel,'off');assert.ok(config.timeout>0&&config.timeout<=70000);
-    assert.equal(options.model,'gpt-6.1-sol');assert.equal(options.reasoning_effort,'medium');assert.equal(options.max_completion_tokens,25000);assert.equal(options.response_format.json_schema.strict,true);
+    assert.equal(calls,1);assert.equal(config.maxRetries,0);assert.equal(config.logLevel,'off');assert.ok(config.timeout>0&&config.timeout<=160000);
+    assert.equal(options.model,'gpt-6.1-sol');assert.equal(options.reasoning_effort,'high');assert.equal(options.max_completion_tokens,25000);assert.equal(options.response_format.json_schema.strict,true);
     for(const key of ['temperature','top_p','logprobs','max_tokens'])assert.ok(!(key in options));
   }finally{if(old===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=old;}
   const ui=readFileSync(new URL('../components/result/AuroraResultScreen.tsx',import.meta.url),'utf8');assert.ok(!ui.includes('/api/aurora-interpretation'));

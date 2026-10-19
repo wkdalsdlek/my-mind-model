@@ -43,6 +43,18 @@ export function universeModelResponse(context) {
 export function universeInterpretation(context) {
   return parseAuroraInterpretation(JSON.stringify(universeModelResponse(context)),context);
 }
+/** Reversible provider wire fixture; all prose/evidence still comes from the
+ * same synthetic full response, never a network model call. */
+export function universeProviderResponse(context) {
+  const raw = universeModelResponse(context);
+  if (!context.situation) return raw;
+  const aliases = new Map(context.facts.questions.flatMap(q => q.evidence).map((e, i) => [e.ref, `e${i}`]));
+  const compact = value => ({ t: value.text, e: value.evidenceRefs.map(ref => aliases.get(ref)) });
+  return { ...raw, overall: compact(raw.overall), ribbons: Object.fromEntries(Object.entries(raw.ribbons).map(([id, ribbon]) => [id, {
+    psychological: compact(ribbon.psychological), philosophical: compact(ribbon.philosophical), currentMind: compact(ribbon.currentMind),
+    reportSummary: compact(ribbon.reportSummary), reflectionQuestion: ribbon.reflectionQuestion,
+  }])), report: Object.fromEntries(Object.entries(raw.report).map(([key, value]) => [key, compact(value)])) };
+}
 export async function universeFixture(state = universeState(), quality = 'balanced', flow = 'hybrid', situation) {
   const payload = buildAuroraInterpretationRequest(state, quality, flow, situation), context = await prepareAuroraInterpretation(payload);
   return { version: 'aurora-universe-v1', snapshot: prepareAuroraResult(state).snapshot, context, status: 'interpreted', interpretation: universeInterpretation(context) };
